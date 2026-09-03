@@ -1,10 +1,12 @@
 # CareerCompass-BE
 
-건국대학교 졸업 프로젝트 **CareerCompass** (팀 CamBridge) 의 백엔드 서버.
+건국대학교 졸업 프로젝트 **CareerCompass** 의 백엔드 서버.
 
 개인 맞춤 장학금·공모전·채용공고를 모아 적합도를 분석하고, 경험 카드를 바탕으로 자기소개서 초안을 만들어 주는 앱의 서버 쪽이다.
 
-담당은 **조영탁 (@Tak002)** — 팀 제안서 「팀원 정보」의 역할 분담이 백엔드다.
+담당은 **조영탁 (@Tak002)** — 2026-05-18 제안서 「팀원 정보」의 역할 분담이 백엔드다.
+
+> 2026-03-06 제안서(`… – CamBridge`)는 **폐기된 주제의 문서**다. 팀 역할은 그 뒤 다시 나뉘었으니 그 문서를 근거로 삼지 않는다.
 
 ## 현재 상태
 
@@ -33,16 +35,20 @@
 | 시스템 아키텍처 | [Figma 12 Architecture](https://www.figma.com/design/osiio5ZAcJreMsKUqjY2QW?node-id=31-2) |
 | 화면 설계 50종 | [Figma 파일 전체](https://www.figma.com/design/osiio5ZAcJreMsKUqjY2QW) |
 
-## 클라이언트와의 관계
+## 다른 저장소와의 관계
 
-Android 클라이언트는 [Team-CamBridge/CareerCompass-FE](https://github.com/Team-CamBridge/CareerCompass-FE) 다. **FE 는 이 API 스펙대로 §1~§5 를 이미 구현했다** — 로그인·온보딩 4단계·공고 피드·필터·공고 상세·게시판 등록까지 화면과 데이터 계층이 서 있고, `core/network` 의 `BASE_URL` 만 자리표시자다. 서버가 스펙과 다른 모양을 주면 FE 의 `ApiWireContractSmokeTest`(전 엔드포인트 route·body·응답 스키마 검증)가 먼저 깨진다.
+**AI/NLP 는 별도 저장소다** — [CareerCompass-AI](https://github.com/Team-CareerCompass/CareerCompass-AI) (서성덕 @kislevite, 이슈 30건). 공고 구조화 파싱·적합도 산출·지원서 초안 생성·추천이 그쪽에 있고, **이 서버가 그것을 호출한다.** 저장·인증·API 노출은 여기가 하고 모델과 프롬프트는 그쪽이 다룬다. 경계는 [CareerCompass-AI #1](https://github.com/Team-CareerCompass/CareerCompass-AI/issues/1) 에서 확정한다.
+
+### 클라이언트와의 관계
+
+Android 클라이언트는 [Team-CareerCompass/CareerCompass-FE](https://github.com/Team-CareerCompass/CareerCompass-FE) 다. **FE 는 이 API 스펙대로 §1~§5 를 이미 구현했다** — 로그인·온보딩 4단계·공고 피드·필터·공고 상세·게시판 등록까지 화면과 데이터 계층이 서 있고, `core/network` 의 `BASE_URL` 만 자리표시자다. 서버가 스펙과 다른 모양을 주면 FE 의 `ApiWireContractSmokeTest`(전 엔드포인트 route·body·응답 스키마 검증)가 먼저 깨진다.
 
 **FE 가 서버 때문에 막혀 있는 것** — `blocks:FE` 라벨이 붙은 이슈들이다.
 
 | 막힌 것 | 이슈 |
 | --- | --- |
 | 학교·직무 목록 엔드포인트가 없어 FE 가 로컬 상수를 쓴다 | #17 |
-| refresh 재사용·로그아웃 무효화 범위 정책이 스펙에 없다 ([FE#79](https://github.com/Team-CamBridge/CareerCompass-FE/issues/79)) | #11 |
+| refresh 재사용·로그아웃 무효화 범위 정책이 스펙에 없다 ([FE#79](https://github.com/Team-CareerCompass/CareerCompass-FE/issues/79)) | #11 |
 | 공고 파싱 처리 상태 필드가 응답 계약에 없다 | #27 |
 | 적합도 분석 축 문구·강점/약점 코멘트가 서버 연동 전이다 | #33 |
 | 실서버 주소(HTTPS)가 없다 | #7 |
