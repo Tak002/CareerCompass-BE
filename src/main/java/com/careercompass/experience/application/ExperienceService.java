@@ -1,6 +1,7 @@
 package com.careercompass.experience.application;
 
 import com.careercompass.common.api.ErrorCode;
+import com.careercompass.common.events.ProfileChanged;
 import com.careercompass.common.exception.BusinessException;
 import com.careercompass.common.paging.Cursor;
 import com.careercompass.common.paging.CursorCodec;
@@ -11,6 +12,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,9 +44,12 @@ public class ExperienceService {
   private static final Set<String> START_DATE_REQUIRED = Set.of("project", "intern");
 
   private final ExperienceCardRepository repository;
+  private final ApplicationEventPublisher eventPublisher;
 
-  public ExperienceService(ExperienceCardRepository repository) {
+  public ExperienceService(
+      ExperienceCardRepository repository, ApplicationEventPublisher eventPublisher) {
     this.repository = repository;
+    this.eventPublisher = eventPublisher;
   }
 
   @Transactional(readOnly = true)
@@ -81,14 +86,17 @@ public class ExperienceService {
           ErrorCode.LIMIT_EXCEEDED, "경험 카드는 최대 " + MAX_CARDS + "개까지 등록할 수 있습니다", null);
     }
     validate(request.type(), request.title(), request.startDate(), request.data(), true);
-    return repository.save(
-        new ExperienceCard(
-            userId,
-            request.type(),
-            request.title(),
-            request.startDate(),
-            request.endDate(),
-            request.data()));
+    ExperienceCard card =
+        repository.save(
+            new ExperienceCard(
+                userId,
+                request.type(),
+                request.title(),
+                request.startDate(),
+                request.endDate(),
+                request.data()));
+    eventPublisher.publishEvent(new ProfileChanged(userId)); // 우대 조건 축 재산출 (#32)
+    return card;
   }
 
   @Transactional
@@ -103,12 +111,14 @@ public class ExperienceService {
     Map<String, Object> data = request.data() != null ? request.data() : card.data();
     validate(card.type(), title, startDate, data, true);
     card.update(request.title(), request.startDate(), request.endDate(), request.data());
+    eventPublisher.publishEvent(new ProfileChanged(userId));
     return card;
   }
 
   @Transactional
   public void delete(Long userId, Long cardId) {
     owned(userId, cardId).softDelete();
+    eventPublisher.publishEvent(new ProfileChanged(userId));
   }
 
   private ExperienceCard owned(Long userId, Long cardId) {

@@ -419,6 +419,13 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 
 **v0.2 확정 (BE #27 #29):** 응답에 `parseStatus` 가 추가된다. `parsed` 는 `parseStatus=done` 일 때만, `suitability` 는 산출된 경우에만 내려가고 그 외에는 null. `canGenerateApplication`(boolean) 필드가 추가된다 — 지원서 작성 버튼 노출 판단은 서버가 내려주며 장학금·채용만 true. `similar` 는 동일 유형 + 키워드 겹침 + 적합도 순 상위 3건.
 
+**적합도 계약 (v0.2 확정, BE #32 #33 #34):**
+
+- 점수가 없는 카드·상세에는 `scoreUnavailableReason` 이 실린다: `profile_incomplete`(경험 카드 0 + 관심 분야 미입력 — 사용자가 조치 가능) / `parsing_failed`(공고 파싱 실패) / `analyzing`(파싱·산출 대기). **목록과 상세가 같은 이름을 쓴다** — 에러(422)가 아니라 데이터 필드다(목록은 부분 실패이므로).
+- `breakdown` 축 이름은 `field_similarity`·`qualification`·`preference`·`competition` 고정. **표시 문구 매핑은 클라이언트가 유지한다** (#33 결정 — FE 기존 방식).
+- `strengthComment`/`weaknessComment` 는 서버 생성값. 생성 실패 시 null 로 내려가되 점수는 정상 — FE 는 null 이면 코멘트 영역만 숨긴다.
+- 자격 축은 「미기입 항목 충족 간주」(F3-2). 재산출: 프로필·경험 변경 시 해당 사용자 점수를 무효화하고 백그라운드 스윕이 다시 채운다.
+
 응답:
 ```json
 {
@@ -670,4 +677,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 - v0.2 (2026-09-05) — §1 인증 정책 확정: refresh 회전·재사용 탐지(계보 폐기)·유예 30초, 로그아웃 범위(이 기기)·액세스 토큰 비블랙리스트, 지문 등록의 계정×기기 귀속. FE#79 차단 해소용 — FE 저장소에 공유 필요.
 - v0.2 (2026-09-05) — §2 onboardingDone 판정·completion 산출식 확정, `/meta/schools`·`/meta/job-categories` 신설(#17, FE 로컬 상수 대체). §3 목록 응답 형식·유형별 필수 필드. §4 `extractStatus` 필드 추가·분류 어휘 확정(`background` 로 통일). FE 공유 필요.
 - v0.2 (2026-09-05) — §5 게시판: detect 처리 상한 ~30초(FE 타임아웃 45초 권장), 등록 즉시 1회 수집, status(active|error)·failCount 로 「수집 오류/일시중지」 구분. §5 공고: `parseStatus` 계약(#27), 검색어 `q`·마감일 범위·`bookmarkedOnly`·`includeExpired` 파라미터 추가, 정렬 축 계약(축 키 없는 행 제외), 상세 `canGenerateApplication` 추가. FE 공유 필요.
+- v0.2 (2026-09-05) — §5 적합도: `scoreUnavailableReason`(profile_incomplete|parsing_failed|analyzing) 계약(#34, FE#100 3분기 지원), breakdown 축 이름 고정·표시 문구는 클라이언트 매핑 유지(#33), 코멘트 실패 시 null·점수는 정상. LLM 장애는 `LLM_UNAVAILABLE`(503) — 목록·프로필 등 비 LLM 기능은 영향 없음(#35). FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.

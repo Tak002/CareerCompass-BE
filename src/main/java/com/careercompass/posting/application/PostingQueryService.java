@@ -62,6 +62,7 @@ public class PostingQueryService {
       String parseStatus,
       Integer score,
       String scoreLabel,
+      String scoreUnavailableReason, // #34: profile_incomplete | parsing_failed | analyzing | null
       boolean isRead,
       boolean isBookmarked) {}
 
@@ -208,10 +209,66 @@ public class PostingQueryService {
                     rs.getString("parse_status"),
                     rs.getObject("score") == null ? null : rs.getInt("score"),
                     rs.getString("label"),
+                    null,
                     rs.getBoolean("is_read"),
                     rs.getBoolean("is_bookmarked")));
 
+    if (fetched.stream().anyMatch(card -> card.score() == null)) {
+      boolean profileIncomplete = profileIncomplete(userId);
+      fetched =
+          fetched.stream()
+              .map(
+                  card ->
+                      new PostingCard(
+                          card.id(),
+                          card.title(),
+                          card.type(),
+                          card.boardId(),
+                          card.boardName(),
+                          card.dueDate(),
+                          card.collectedAt(),
+                          card.parseStatus(),
+                          card.score(),
+                          card.scoreLabel(),
+                          unavailableReason(card.score(), card.parseStatus(), profileIncomplete),
+                          card.isRead(),
+                          card.isBookmarked()))
+              .toList();
+    }
+
     return CursorPage.of(fetched, limit, card -> cursorOf(sort, card));
+  }
+
+  /**
+   * #34 계약 — 목록·상세가 같은 이름을 쓴다. 우선순위: 사용자가 고칠 수 있는 사유(profile_incomplete) → 영구 실패(parsing_failed) →
+   * 대기 (analyzing).
+   */
+  private String unavailableReason(Integer score, String parseStatus, boolean profileIncomplete) {
+    if (score != null) {
+      return null;
+    }
+    if (profileIncomplete) {
+      return "profile_incomplete";
+    }
+    if ("failed".equals(parseStatus)) {
+      return "parsing_failed";
+    }
+    return "analyzing";
+  }
+
+  /** 경험 카드 0개 + 관심 분야(직무·태그) 미입력 → 산출 불가 (명세서 F3-2 예외). */
+  private boolean profileIncomplete(Long userId) {
+    Boolean incomplete =
+        jdbc.queryForObject(
+            """
+            select not exists(select 1 from user_job_interest where user_id = :userId)
+               and not exists(select 1 from user_tag where user_id = :userId)
+               and not exists(select 1 from experience_card
+                              where user_id = :userId and deleted_at is null)
+            """,
+            Map.of("userId", userId),
+            Boolean.class);
+    return Boolean.TRUE.equals(incomplete);
   }
 
   private Cursor cursorOf(String sort, PostingCard card) {
@@ -232,6 +289,7 @@ public class PostingQueryService {
       String parseStatus,
       PostingParsed parsed,
       SuitabilityScore suitability,
+      String scoreUnavailableReason,
       boolean isRead,
       boolean isBookmarked,
       boolean canGenerateApplication,
@@ -251,6 +309,10 @@ public class PostingQueryService {
         parseStatus,
         parsed.filter(p -> "done".equals(p.parseStatus())).orElse(null),
         suitability,
+        unavailableReason(
+            suitability == null ? null : suitability.score(),
+            parseStatus,
+            suitability == null && profileIncomplete(userId)),
         state.map(PostingUserState::isRead).orElse(false),
         state.map(PostingUserState::isBookmarked).orElse(false),
         // 지원서 작성 버튼은 장학금·채용만 — 판단은 서버가 내려준다 (#29 결정)

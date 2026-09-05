@@ -1,6 +1,7 @@
 package com.careercompass.user.application;
 
 import com.careercompass.common.api.ErrorCode;
+import com.careercompass.common.events.ProfileChanged;
 import com.careercompass.common.exception.BusinessException;
 import com.careercompass.experience.domain.ExperienceCardRepository;
 import com.careercompass.pastapplication.domain.PastApplicationRepository;
@@ -17,6 +18,7 @@ import java.math.BigDecimal;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +42,7 @@ public class UserProfileService {
   private final JobCategoryRepository jobCategoryRepository;
   private final ExperienceCardRepository experienceCardRepository;
   private final PastApplicationRepository pastApplicationRepository;
+  private final ApplicationEventPublisher eventPublisher;
 
   public UserProfileService(
       UserRepository userRepository,
@@ -48,7 +51,8 @@ public class UserProfileService {
       UserTagRepository tagRepository,
       JobCategoryRepository jobCategoryRepository,
       ExperienceCardRepository experienceCardRepository,
-      PastApplicationRepository pastApplicationRepository) {
+      PastApplicationRepository pastApplicationRepository,
+      ApplicationEventPublisher eventPublisher) {
     this.userRepository = userRepository;
     this.profileRepository = profileRepository;
     this.interestRepository = interestRepository;
@@ -56,6 +60,7 @@ public class UserProfileService {
     this.jobCategoryRepository = jobCategoryRepository;
     this.experienceCardRepository = experienceCardRepository;
     this.pastApplicationRepository = pastApplicationRepository;
+    this.eventPublisher = eventPublisher;
   }
 
   public record JobInterestItem(String code, int priority) {}
@@ -89,6 +94,7 @@ public class UserProfileService {
     }
     profile.update(patch.school(), patch.department(), patch.gpa(), patch.gradYear());
     refreshOnboarding(profile);
+    eventPublisher.publishEvent(new ProfileChanged(userId)); // 적합도 재산출 트리거 (#32)
     return assemble(userId);
   }
 
@@ -118,6 +124,7 @@ public class UserProfileService {
     interestRepository.saveAll(
         interests.stream().map(i -> new UserJobInterest(userId, i.code(), i.priority())).toList());
     refreshOnboarding(profile(userId));
+    eventPublisher.publishEvent(new ProfileChanged(userId));
     return assemble(userId);
   }
 
@@ -141,6 +148,7 @@ public class UserProfileService {
     }
     tagRepository.deleteByUserId(userId);
     tagRepository.saveAll(normalized.stream().map(t -> new UserTag(userId, t)).toList());
+    eventPublisher.publishEvent(new ProfileChanged(userId));
     return assemble(userId);
   }
 

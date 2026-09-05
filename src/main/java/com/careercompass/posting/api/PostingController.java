@@ -46,6 +46,7 @@ public class PostingController {
       String parseStatus,
       Integer score,
       String scoreLabel,
+      String scoreUnavailableReason,
       boolean isRead,
       boolean isBookmarked) {
 
@@ -60,6 +61,7 @@ public class PostingController {
           card.parseStatus(),
           card.score(),
           card.scoreLabel(),
+          card.scoreUnavailableReason(),
           card.isRead(),
           card.isBookmarked());
     }
@@ -163,6 +165,7 @@ public class PostingController {
       String parseStatus,
       ParsedResponse parsed,
       SuitabilityResponse suitability,
+      String scoreUnavailableReason,
       boolean isRead,
       boolean isBookmarked,
       boolean canGenerateApplication,
@@ -195,6 +198,7 @@ public class PostingController {
             detail.parseStatus(),
             parsed,
             SuitabilityResponse.from(detail.suitability()),
+            detail.scoreUnavailableReason(),
             detail.isRead(),
             detail.isBookmarked(),
             detail.canGenerateApplication(),

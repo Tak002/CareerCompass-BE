@@ -30,6 +30,7 @@ public abstract class IntegrationTestBase {
     // 크롤러: 픽스처 서버(localhost) 허용, 스케줄러 정지, 빠른 타임아웃
     registry.add("app.crawl.allow-private-addresses", () -> "true");
     registry.add("app.crawl.scheduler-enabled", () -> "false");
+    registry.add("app.analysis.worker-enabled", () -> "false");
     registry.add("app.crawl.min-domain-interval-ms", () -> "10");
     registry.add("app.crawl.connect-timeout", () -> "2s");
     registry.add("app.crawl.read-timeout", () -> "3s");

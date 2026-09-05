@@ -106,4 +106,14 @@ public class Posting {
   public Instant collectedAt() {
     return collectedAt;
   }
+
+  /** 구조화 파싱 결과 반영 (#31) — 유형 재분류 실패(null)면 기존 유지, 마감일은 파싱 값이 있으면 갱신. */
+  public void applyParsed(String reclassifiedType, LocalDate parsedDueDate) {
+    if (reclassifiedType != null) {
+      this.type = reclassifiedType;
+    }
+    if (parsedDueDate != null) {
+      this.dueDate = parsedDueDate;
+    }
+  }
 }
