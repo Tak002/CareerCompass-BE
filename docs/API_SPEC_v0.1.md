@@ -652,9 +652,21 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 
 모두 읽음.
 
+### `POST /notifications/fcm-token` (v0.2 신설, BE #44)
+
+로그인 사이에 갱신된 FCM 토큰을 반영한다. `{deviceId, fcmToken}` → 200.
+
 ### `GET /notifications/settings` / `PUT`
 
 설정 조회/수정.
+
+**정책 (v0.2 확정, BE #45~#47):**
+
+- 알림 목록은 최신순 커서 페이징(`cursor`/`limit`/`nextCursor`). 각 알림에 `type`(new_posting|due_soon|board_error|weekly_report)과 `deeplink`(`careercompass://…`)가 실린다. 개별 읽음은 없고 read-all 만(FE 확인 필요 시 추가). 보관 90일 후 자동 삭제.
+- 기본값: 신규·마감·수집오류 ON, 주간 리포트 OFF. `weeklyReport` 정의: 지난 7일 신규 공고 수·7일 내 마감 예정 수 요약, 매주 월 09:00 KST.
+- `quietHours` 는 KST 기준, 자정 걸침(23:00~08:00) 지원. 방해 금지·주말 OFF 동안 발생한 알림은 **알림함에는 즉시 기록되고 푸시만 보류**되어 해제 후 일괄 발송된다(막지 않고 미룬다).
+- 게시판별 OFF 는 신규 공고 알림에 적용. 수집 오류 알림은 게시판 설정과 무관하게 나간다.
+- 트리거: 신규 공고(수집 주기당 1건으로 묶음), 마감 D-3·D-1(북마크 공고, 매일 09:00 KST 배치), 수집 오류(3연속 실패). dedup 키로 같은 사건 재발송 금지.
 
 ```json
 {
@@ -701,4 +713,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 - v0.2 (2026-09-05) — §5 적합도: `scoreUnavailableReason`(profile_incomplete|parsing_failed|analyzing) 계약(#34, FE#100 3분기 지원), breakdown 축 이름 고정·표시 문구는 클라이언트 매핑 유지(#33), 코멘트 실패 시 null·점수는 정상. LLM 장애는 `LLM_UNAVAILABLE`(503) — 목록·프로필 등 비 LLM 기능은 영향 없음(#35). FE 공유 필요.
 - v0.2 (2026-09-05) — §6 지원서: 단건 조회·항목 직접 추가·버전 목록/되돌리기 신설, SSE 이벤트 3종+스냅샷 복원+heartbeat, status 전이 규칙, 글자 수 초과 저장 허용·마지막 쓰기 우선, scoreSnapshot. 장학금·채용 외 생성 거절. FE 공유 필요.
 - v0.2 (2026-09-05) — §7 확정: For You 는 점수 산출 공고만 대상(톱 픽=적합도+마감 D-7 가중, 응답에 title·score 추가), 로드맵은 표본 5명 미만 시 metrics 비움·senior 는 pass+동의 사용자만, Export 의 notion=Notion 호환 마크다운·summary 규칙 기반. §2 `PUT /users/me/consent` 신설(모델 개선 활용 동의, F4-4·#48). FE 공유 필요.
+- v0.2 (2026-09-05) — §8 확정: `/notifications/fcm-token` 신설, 알림 목록 커서 페이징·딥링크·타입, quietHours 는 「기록 즉시·푸시 보류」 정책, weeklyReport 정의, 트리거 3종·묶음 발송·dedup. FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.

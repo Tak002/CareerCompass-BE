@@ -31,6 +31,7 @@ public abstract class IntegrationTestBase {
     registry.add("app.crawl.allow-private-addresses", () -> "true");
     registry.add("app.crawl.scheduler-enabled", () -> "false");
     registry.add("app.analysis.worker-enabled", () -> "false");
+    registry.add("app.notification.worker-enabled", () -> "false");
     registry.add("app.crawl.min-domain-interval-ms", () -> "10");
     registry.add("app.crawl.connect-timeout", () -> "2s");
     registry.add("app.crawl.read-timeout", () -> "3s");

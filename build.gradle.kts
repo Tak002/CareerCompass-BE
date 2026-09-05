@@ -48,6 +48,12 @@ dependencies {
 
     // 게시판 HTML 파싱 (M3 크롤러 — 가져오기는 JDK HttpClient, 파싱만 Jsoup)
     implementation("org.jsoup:jsoup:1.23.2")
+
+    // FCM 푸시 (M8 — 자격증명 미설정 시 로깅 구현이 대신 동작)
+    implementation("com.google.firebase:firebase-admin:9.10.0") {
+        // GCS 가 끌고 오는 XML 컨버터가 켜지면 응답이 XML 로 협상될 수 있다 — JSON 단일 계약 보호
+        exclude(group = "com.fasterxml.jackson.dataformat", module = "jackson-dataformat-xml")
+    }
 }
 
 testing {
