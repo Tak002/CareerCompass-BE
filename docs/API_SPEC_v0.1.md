@@ -378,10 +378,16 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 쿼리 파라미터:
 - `boardIds[]` — 게시판 필터
 - `types[]` — 공고 유형
-- `minScore` — 적합도 최소값
+- `minScore` — 적합도 최소값 (60/70/80 등)
 - `unreadOnly` — 읽지 않은 것만
-- `sort` — `collected_desc` / `due_asc` / `score_desc`
+- `bookmarkedOnly` — 북마크한 것만 (v0.2 추가)
+- `q` — 제목 검색어 (v0.2 추가)
+- `dueAfter`, `dueBefore` — 마감일 범위 필터, ISO date (v0.2 추가, FE#104)
+- `includeExpired` — 마감 지난 공고 포함 여부. 기본 false — **마감 공고는 기본 숨김** (v0.2 확정)
+- `sort` — `collected_desc`(기본) / `due_asc` / `score_desc`
 - `cursor`, `limit`
+
+**정렬 축 계약 (v0.2 확정, BE #28):** `due_asc` 는 마감일이 있는 공고만, `score_desc` 는 적합도가 산출된 공고만 내려간다(정렬 키 없는 행 제외 — 커서 일관성). 카드에는 `parseStatus`(`pending`|`done`|`failed`)가 포함된다(#27) — `score` 가 null 인 이유를 FE 가 「분석 중(pending)/분석 실패(failed)/프로필 미입력(#34)」으로 가른다.
 
 응답:
 ```json
@@ -410,6 +416,8 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 ### `GET /postings/{id}`
 
 공고 상세 (구조화 결과 + 적합도 분석 + 유사 공고 포함).
+
+**v0.2 확정 (BE #27 #29):** 응답에 `parseStatus` 가 추가된다. `parsed` 는 `parseStatus=done` 일 때만, `suitability` 는 산출된 경우에만 내려가고 그 외에는 null. `canGenerateApplication`(boolean) 필드가 추가된다 — 지원서 작성 버튼 노출 판단은 서버가 내려주며 장학금·채용만 true. `similar` 는 동일 유형 + 키워드 겹침 + 적합도 순 상위 3건.
 
 응답:
 ```json
@@ -661,4 +669,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 
 - v0.2 (2026-09-05) — §1 인증 정책 확정: refresh 회전·재사용 탐지(계보 폐기)·유예 30초, 로그아웃 범위(이 기기)·액세스 토큰 비블랙리스트, 지문 등록의 계정×기기 귀속. FE#79 차단 해소용 — FE 저장소에 공유 필요.
 - v0.2 (2026-09-05) — §2 onboardingDone 판정·completion 산출식 확정, `/meta/schools`·`/meta/job-categories` 신설(#17, FE 로컬 상수 대체). §3 목록 응답 형식·유형별 필수 필드. §4 `extractStatus` 필드 추가·분류 어휘 확정(`background` 로 통일). FE 공유 필요.
+- v0.2 (2026-09-05) — §5 게시판: detect 처리 상한 ~30초(FE 타임아웃 45초 권장), 등록 즉시 1회 수집, status(active|error)·failCount 로 「수집 오류/일시중지」 구분. §5 공고: `parseStatus` 계약(#27), 검색어 `q`·마감일 범위·`bookmarkedOnly`·`includeExpired` 파라미터 추가, 정렬 축 계약(축 키 없는 행 제외), 상세 `canGenerateApplication` 추가. FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.
