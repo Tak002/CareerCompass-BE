@@ -27,5 +27,11 @@ public abstract class IntegrationTestBase {
     registry.add("spring.datasource.password", POSTGRES::getPassword);
     registry.add("auth.jwt.secret", () -> "integration-test-secret-key-0123456789abcdef");
     registry.add("app.storage.local-dir", () -> "build/it-storage");
+    // 크롤러: 픽스처 서버(localhost) 허용, 스케줄러 정지, 빠른 타임아웃
+    registry.add("app.crawl.allow-private-addresses", () -> "true");
+    registry.add("app.crawl.scheduler-enabled", () -> "false");
+    registry.add("app.crawl.min-domain-interval-ms", () -> "10");
+    registry.add("app.crawl.connect-timeout", () -> "2s");
+    registry.add("app.crawl.read-timeout", () -> "3s");
   }
 }

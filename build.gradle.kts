@@ -45,6 +45,9 @@ dependencies {
     // 과거 지원서 텍스트 추출 — PDF·DOCX (M2 #19)
     implementation("org.apache.pdfbox:pdfbox:3.0.8")
     implementation("org.apache.poi:poi-ooxml:5.5.1")
+
+    // 게시판 HTML 파싱 (M3 크롤러 — 가져오기는 JDK HttpClient, 파싱만 Jsoup)
+    implementation("org.jsoup:jsoup:1.23.2")
 }
 
 testing {
