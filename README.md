@@ -40,6 +40,7 @@ DB만 띄우고 앱은 IDE에서 돌리려면 `docker compose up db` 후 `local`
 | 문서 | 위치 |
 | --- | --- |
 | API 스펙 v0.1 (엔드포인트 40개) | [`docs/API_SPEC_v0.1.md`](docs/API_SPEC_v0.1.md) |
+| 개인정보 처리 결정 (#48) | [`docs/privacy.md`](docs/privacy.md) |
 | 상세 기능 스펙·요구사항 명세서 (F1~F4) | 팀 문서 폴더 (교수님 제출본) |
 | ERD — PostgreSQL 16 엔티티 | [Figma 11 ERD](https://www.figma.com/design/osiio5ZAcJreMsKUqjY2QW?node-id=29-2) |
 | 시스템 아키텍처 | [Figma 12 Architecture](https://www.figma.com/design/osiio5ZAcJreMsKUqjY2QW?node-id=31-2) |

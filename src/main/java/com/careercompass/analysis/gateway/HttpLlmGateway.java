@@ -36,14 +36,22 @@ public class HttpLlmGateway implements LlmGateway {
 
   private final AiProperties properties;
   private final ObjectMapper objectMapper;
+  private final com.careercompass.common.privacy.PrivacyMasker privacyMasker;
+  private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
   private final RestClient restClient;
   private final Map<String, ParsedPosting> parseCache = new ConcurrentHashMap<>();
   private final AtomicInteger dailyCalls = new AtomicInteger();
   private final AtomicReference<LocalDate> budgetDay = new AtomicReference<>(LocalDate.now());
 
-  public HttpLlmGateway(AiProperties properties, ObjectMapper objectMapper) {
+  public HttpLlmGateway(
+      AiProperties properties,
+      ObjectMapper objectMapper,
+      com.careercompass.common.privacy.PrivacyMasker privacyMasker,
+      io.micrometer.core.instrument.MeterRegistry meterRegistry) {
     this.properties = properties;
     this.objectMapper = objectMapper;
+    this.privacyMasker = privacyMasker;
+    this.meterRegistry = meterRegistry;
     JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory();
     requestFactory.setReadTimeout(properties.timeout());
     this.restClient =
@@ -121,16 +129,23 @@ public class HttpLlmGateway implements LlmGateway {
       String postingTitle,
       List<String> keywords,
       List<String> experienceSummaries) {
+    // 개인정보 경계 (#48): 경험 요약·과거 자소서 발췌는 마스킹 후에만 외부로 나간다
     JsonNode node =
         callWithRetry(
             "/v1/draft-answer",
             Map.of(
-                "question", question,
-                "maxChars", maxChars == null ? 0 : maxChars,
-                "tone", tone == null ? "formal" : tone,
-                "postingTitle", postingTitle,
-                "keywords", keywords,
-                "experienceSummaries", experienceSummaries));
+                "question",
+                question,
+                "maxChars",
+                maxChars == null ? 0 : maxChars,
+                "tone",
+                tone == null ? "formal" : tone,
+                "postingTitle",
+                postingTitle,
+                "keywords",
+                keywords,
+                "experienceSummaries",
+                privacyMasker.maskAll(experienceSummaries)));
     String answer = node.path("answer").asText(null);
     if (answer == null || answer.isBlank()) {
       throw new BusinessException(ErrorCode.LLM_UNAVAILABLE, "AI 응답 스키마가 올바르지 않습니다");
@@ -145,6 +160,7 @@ public class HttpLlmGateway implements LlmGateway {
       try {
         String response = restClient.post().uri(path).body(body).retrieve().body(String.class);
         dailyCalls.incrementAndGet();
+        meterRegistry.counter("careercompass.ai.calls", "outcome", "success").increment();
         JsonNode node = objectMapper.readTree(response);
         logUsage(path, node);
         return node;
@@ -161,6 +177,7 @@ public class HttpLlmGateway implements LlmGateway {
       }
     }
     log.warn("AI 게이트웨이 호출 실패: {} ({})", path, last == null ? "?" : last.toString());
+    meterRegistry.counter("careercompass.ai.calls", "outcome", "failure").increment();
     throw new BusinessException(ErrorCode.LLM_UNAVAILABLE);
   }
 

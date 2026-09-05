@@ -30,7 +30,9 @@ class HttpLlmGatewayTest {
   private HttpLlmGateway gateway(int port) {
     return new HttpLlmGateway(
         new AiProperties("http://127.0.0.1:" + port, Duration.ofSeconds(2), 1, "v1", 100),
-        new ObjectMapper());
+        new ObjectMapper(),
+        new com.careercompass.common.privacy.PrivacyMasker(),
+        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
   }
 
   @Test

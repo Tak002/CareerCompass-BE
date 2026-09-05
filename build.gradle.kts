@@ -37,6 +37,9 @@ dependencies {
     // API 문서 (dev/local 프로파일에서만 노출 — issue #8)
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17")
 
+    // 운영 프로파일 구조화(JSON) 로그 (#49)
+    implementation("net.logstash.logback:logstash-logback-encoder:9.0")
+
     // JWT (M1 인증)
     implementation("io.jsonwebtoken:jjwt-api:0.13.0")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.13.0")

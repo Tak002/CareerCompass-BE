@@ -40,6 +40,7 @@ public class CrawlService {
   private final RobotsChecker robotsChecker;
   private final BoardStructureDetector detector;
   private final ApplicationEventPublisher eventPublisher;
+  private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
   private final Clock clock;
 
   public CrawlService(
@@ -50,6 +51,7 @@ public class CrawlService {
       RobotsChecker robotsChecker,
       BoardStructureDetector detector,
       ApplicationEventPublisher eventPublisher,
+      io.micrometer.core.instrument.MeterRegistry meterRegistry,
       Clock clock) {
     this.boardRepository = boardRepository;
     this.postingRepository = postingRepository;
@@ -58,6 +60,7 @@ public class CrawlService {
     this.robotsChecker = robotsChecker;
     this.detector = detector;
     this.eventPublisher = eventPublisher;
+    this.meterRegistry = meterRegistry;
     this.clock = clock;
   }
 
@@ -71,9 +74,16 @@ public class CrawlService {
       return -1;
     }
     Instant now = clock.instant();
+    long startedMs = System.currentTimeMillis();
     try {
       List<Long> newPostingIds = collect(board);
       board.collectSucceeded(now);
+      meterRegistry.counter("careercompass.crawl.runs", "outcome", "success").increment();
+      log.info(
+          "crawl ok: board={} new={} durationMs={}",
+          board.id(),
+          newPostingIds.size(),
+          System.currentTimeMillis() - startedMs);
       if (!newPostingIds.isEmpty()) {
         eventPublisher.publishEvent(
             new CrawlEvents.NewPostingsCollected(board.id(), board.userId(), newPostingIds));
@@ -81,6 +91,7 @@ public class CrawlService {
       return newPostingIds.size();
     } catch (Exception e) {
       log.warn("crawl failed: board={} url={} reason={}", board.id(), board.url(), e.toString());
+      meterRegistry.counter("careercompass.crawl.runs", "outcome", "failure").increment();
       boolean disabled = board.collectFailed(now);
       if (disabled) {
         eventPublisher.publishEvent(
