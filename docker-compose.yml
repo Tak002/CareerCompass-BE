@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-careercompass}
+      POSTGRES_USER: ${DB_USER:-careercompass}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-careercompass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-careercompass} -d ${DB_NAME:-careercompass}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-careercompass}
+      DB_USER: ${DB_USER:-careercompass}
+      DB_PASSWORD: ${DB_PASSWORD:-careercompass}
+    ports:
+      - "8080:8080"
+
+volumes:
+  dbdata:

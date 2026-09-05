@@ -14,6 +14,16 @@
 
 > 조영탁님은 아직 조직 초대를 수락하지 않아 이슈 담당자로 배정되지 않았다. 수락하면 전부 배정한다.
 
+## 로컬 실행
+
+```
+docker compose up --build
+```
+
+서버 http://localhost:8080 · 헬스체크 `GET /actuator/health` · API 문서(local/dev 전용) `/swagger-ui`.
+DB만 띄우고 앱은 IDE에서 돌리려면 `docker compose up db` 후 `local` 프로파일로 실행한다.
+빌드·테스트는 `./gradlew build`(단위) / `./gradlew integrationTest`(Testcontainers, Docker 필요).
+
 ## 기술 스택
 
 제안서에서 확정한 대로 간다.

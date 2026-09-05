@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: careercompass-be
+  datasource:
+    url: ${DB_URL:}
+    username: ${DB_USER:}
+    password: ${DB_PASSWORD:}
+  jpa:
+    # 스키마는 Flyway 가 소유한다 — 어긋나면 기동 실패 (issue #2)
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
+auth:
+  jwt:
+    secret: ${JWT_SECRET:}
+    access-ttl: 30m
+    refresh-ttl: 14d
+    refresh-grace: 30s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+# 운영 기본값: API 문서 비공개 (local/dev 프로파일에서만 켠다 — issue #8)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+server:
+  shutdown: graceful
