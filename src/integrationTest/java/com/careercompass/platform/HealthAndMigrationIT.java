@@ -39,8 +39,9 @@ class HealthAndMigrationIT extends IntegrationTestBase {
             "select count(*) from information_schema.tables"
                 + " where table_schema = 'public' and table_type = 'BASE TABLE'",
             Integer.class);
-    // ERD 16 + user_device + refresh_token + school + job_category + flyway_schema_history
-    assertThat(tables).isEqualTo(21);
+    // ERD 16 + user_device/refresh_token + school/job_category + application_item_version
+    // + flyway_schema_history
+    assertThat(tables).isEqualTo(22);
   }
 
   @Test

@@ -501,6 +501,10 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 
 `status`는 `generating` / `ready` / `partial_failed` / `saved`.
 
+### `GET /applications/{id}` (v0.2 신설, BE #37)
+
+지원서 단건 조회 — SSE 가 끊겼을 때 현재 상태를 복원하는 경로. 응답은 POST /applications 와 같은 모양 + `postingTitle`/`postingType`/`result`/`scoreSnapshot`.
+
 ### `GET /applications/{id}/stream` (SSE)
 
 생성 진행 상황 실시간 스트림. 각 항목 완료 시 이벤트 발송.
@@ -509,6 +513,21 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 event: item_done
 data: {"itemId": 2, "answer": "..."}
 ```
+
+**v0.2 확정 (BE #36 #37):**
+
+- 이벤트 3종: `item_done` / `item_failed{itemId}` / `complete{status}`. 15초 간격 heartbeat 주석 전송.
+- 구독 시 **이미 끝난 항목의 스냅샷 이벤트를 먼저 보낸다** — 재연결 복원. 생성이 이미 끝난 지원서 구독은 스냅샷+complete 후 즉시 닫힌다. 모바일에서 끊기면 `GET /applications/{id}` 로 동일 상태를 받는다.
+- status 전이: `generating` → 전 항목 성공 `ready` / 일부 실패 `partial_failed` → 최종 저장 `saved`. 항목은 독립 생성 — 하나가 실패해도 나머지는 나간다.
+- 장학금·채용이 아닌 공고의 생성 요청은 `INVALID_INPUT`(field=postingId) 로 거절.
+
+### `POST /applications/{id}/items` (v0.2 신설, BE #36)
+
+양식 미인식 공고에서 질문 항목을 직접 추가한다. `{question, maxChars}` → 201, 추가 직후 AI 초안이 동기로 생성되어 응답에 담긴다.
+
+### `GET /applications/{id}/items/{itemId}/versions` · `POST .../versions/{versionId}/revert` (v0.2 신설, BE #38)
+
+재생성·되돌리기 시 이전 답변이 버전으로 보관된다(최대 3개, 초과분은 오래된 것부터 삭제). 되돌리기는 현재 본문도 버전으로 보관한 뒤 교체한다. 재생성은 **성공 시에만** 버전을 소비하며, LLM 장애면 503 과 함께 기존 답변이 유지된다.
 
 ### `POST /applications/{id}/items/{itemId}/regenerate`
 
@@ -533,6 +552,8 @@ data: {"itemId": 2, "answer": "..."}
 ### `POST /applications/{id}/save`
 
 최종 저장. 이력 자동 생성.
+
+**v0.2 확정 (BE #39):** 글자 수 초과 상태의 저장을 서버가 막지 않는다(경고는 클라이언트 몫). 편집 충돌은 마지막 쓰기 우선(30초 자동 임시 저장 전제). 저장 시 적합도 점수 스냅샷(`scoreSnapshot`)이 이력에 남는다.
 
 ### `PATCH /applications/{id}/result`
 
@@ -678,4 +699,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 - v0.2 (2026-09-05) — §2 onboardingDone 판정·completion 산출식 확정, `/meta/schools`·`/meta/job-categories` 신설(#17, FE 로컬 상수 대체). §3 목록 응답 형식·유형별 필수 필드. §4 `extractStatus` 필드 추가·분류 어휘 확정(`background` 로 통일). FE 공유 필요.
 - v0.2 (2026-09-05) — §5 게시판: detect 처리 상한 ~30초(FE 타임아웃 45초 권장), 등록 즉시 1회 수집, status(active|error)·failCount 로 「수집 오류/일시중지」 구분. §5 공고: `parseStatus` 계약(#27), 검색어 `q`·마감일 범위·`bookmarkedOnly`·`includeExpired` 파라미터 추가, 정렬 축 계약(축 키 없는 행 제외), 상세 `canGenerateApplication` 추가. FE 공유 필요.
 - v0.2 (2026-09-05) — §5 적합도: `scoreUnavailableReason`(profile_incomplete|parsing_failed|analyzing) 계약(#34, FE#100 3분기 지원), breakdown 축 이름 고정·표시 문구는 클라이언트 매핑 유지(#33), 코멘트 실패 시 null·점수는 정상. LLM 장애는 `LLM_UNAVAILABLE`(503) — 목록·프로필 등 비 LLM 기능은 영향 없음(#35). FE 공유 필요.
+- v0.2 (2026-09-05) — §6 지원서: 단건 조회·항목 직접 추가·버전 목록/되돌리기 신설, SSE 이벤트 3종+스냅샷 복원+heartbeat, status 전이 규칙, 글자 수 초과 저장 허용·마지막 쓰기 우선, scoreSnapshot. 장학금·채용 외 생성 거절. FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.
