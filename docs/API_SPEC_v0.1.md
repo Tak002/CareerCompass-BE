@@ -200,6 +200,30 @@ GET /postings?cursor=eyJ...&limit=20
 { "tags": ["AI", "스타트업", "환경"] }
 ```
 
+**정책 (v0.2 확정, BE #15 #16):**
+
+- **onboardingDone 판정**: Step 1(학교·학과 입력)과 Step 2(희망 직무 1개 이상)가 완료되면 true. Step 3 경험·Step 4 지원서는 선택. 한 번 true 가 되면 되돌리지 않는다.
+- **completion 산출식(%)**: 이름 10 + 학교 10 + 학과 10 + 학점 10 + 졸업연도 10 + 희망직무 15 + 태그 10 + 경험카드(1개↑) 15 + 과거지원서(1개↑) 10 = 100.
+- PATCH 검증: 이름 ≤20자, 학과 ≤30자, 학점 0.0~4.5, 졸업연도 2000~2100. 위반은 `INVALID_INPUT` + `field`.
+- 직무·태그 **개수** 위반(직무 0·4개↑, 태그 0·6개↑)은 `LIMIT_EXCEEDED`(422), 형식 위반(알 수 없는 code, 중복 priority, 빈 태그)은 `INVALID_INPUT`(400).
+- 태그 정규화: 앞뒤 공백 제거·연속 공백 축약 후 중복은 조용히 제거된다.
+
+### `GET /meta/schools?q=&limit=` (v0.2 신설, BE #17)
+
+학교 검색(부분 일치). 검색 보조 용도라 커서 없이 `limit`(기본 20, 최대 50)만 지원. `Cache-Control: max-age=86400`.
+
+```json
+{ "ok": true, "data": { "schools": [ { "id": 1, "name": "건국대학교" } ] } }
+```
+
+### `GET /meta/job-categories` (v0.2 신설, BE #17)
+
+희망 직무 목록 — 한국표준직업분류를 IT·사무 중심으로 간추린 어휘. `code` 는 `PUT /users/me/job-interests` 와 동일. FE 는 이 API 로 로컬 상수를 대체한다.
+
+```json
+{ "ok": true, "data": { "categories": [ { "code": "backend", "label": "백엔드 개발" } ] } }
+```
+
 ---
 
 ## 3. 경험 카드 (`/experiences`)
@@ -230,11 +254,13 @@ GET /postings?cursor=eyJ...&limit=20
 
 ### `PATCH /experiences/{id}`
 
-경험 카드 수정.
+경험 카드 수정. `type` 은 변경 불가.
 
 ### `DELETE /experiences/{id}`
 
 경험 카드 삭제.
+
+**정책 (v0.2 확정, BE #18):** 목록 응답은 `{ experiences: [...], nextCursor }`. 최대 30개 초과는 `LIMIT_EXCEEDED`(422), 남의 카드는 404. 유형별 `data` 필수 필드(명세서 F1-3): `award`=contestName·prize, `intern`=company·role(+startDate 필수), `activity`=activityName·organization, `cert`=certName, `project`=startDate 필수. 누락은 `INVALID_INPUT` + `field`(예: `data.prize`).
 
 ---
 
@@ -280,7 +306,14 @@ label: "2024 카카오 인턴 자소서"
 
 ### `DELETE /past-applications/{id}`
 
-지원서 삭제 (S3 파일 포함).
+지원서 삭제 (저장소 파일 포함).
+
+**정책 (v0.2 확정, BE #19 #20):**
+
+- 업로드 응답에 `extractStatus`(`done`|`failed`) 필드가 추가된다. 텍스트 추출 실패(스캔 PDF 등) 시 파일은 보관하되 `extractStatus: "failed"`, `items: []`.
+- 분류 카테고리 어휘: `motivation`(지원 동기)·`background`(성장 배경)·`experience`(경험 기술)·`competency`(직무 역량)·`aspiration`(입사 후 포부)·`other`(기타). 확신 없는 항목은 `confident: false` — FE 는 「확인 필요」로 표시.
+- 분류는 업로드 요청 안에서 동기 처리(201 응답에 items 포함). 현재 분류기는 온프레미스 휴리스틱 — 자소서 원문을 외부로 보내지 않는다. LLM 분류 전환은 CareerCompass-AI 경계(AI#1)·개인정보 결정(#48) 이후.
+- 최대 10개 초과는 `LIMIT_EXCEEDED`(422), 형식·크기 위반은 `INVALID_INPUT`(field=file).
 
 ---
 
@@ -627,4 +660,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 ## 10. 변경 이력
 
 - v0.2 (2026-09-05) — §1 인증 정책 확정: refresh 회전·재사용 탐지(계보 폐기)·유예 30초, 로그아웃 범위(이 기기)·액세스 토큰 비블랙리스트, 지문 등록의 계정×기기 귀속. FE#79 차단 해소용 — FE 저장소에 공유 필요.
+- v0.2 (2026-09-05) — §2 onboardingDone 판정·completion 산출식 확정, `/meta/schools`·`/meta/job-categories` 신설(#17, FE 로컬 상수 대체). §3 목록 응답 형식·유형별 필수 필드. §4 `extractStatus` 필드 추가·분류 어휘 확정(`background` 로 통일). FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.

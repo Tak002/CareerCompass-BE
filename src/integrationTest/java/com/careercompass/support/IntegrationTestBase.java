@@ -26,5 +26,6 @@ public abstract class IntegrationTestBase {
     registry.add("spring.datasource.username", POSTGRES::getUsername);
     registry.add("spring.datasource.password", POSTGRES::getPassword);
     registry.add("auth.jwt.secret", () -> "integration-test-secret-key-0123456789abcdef");
+    registry.add("app.storage.local-dir", () -> "build/it-storage");
   }
 }

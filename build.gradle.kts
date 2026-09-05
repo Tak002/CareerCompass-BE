@@ -41,6 +41,10 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:0.13.0")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.13.0")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.13.0")
+
+    // 과거 지원서 텍스트 추출 — PDF·DOCX (M2 #19)
+    implementation("org.apache.pdfbox:pdfbox:3.0.8")
+    implementation("org.apache.poi:poi-ooxml:5.5.1")
 }
 
 testing {

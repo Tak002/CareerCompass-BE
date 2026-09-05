@@ -44,6 +44,16 @@ public final class TestFixtures {
         UUID.randomUUID().toString());
   }
 
+  public static long pastApplication(JdbcTemplate jdbc, long userId, String label) {
+    return jdbc.queryForObject(
+        "insert into past_application (user_id, label, file_path, file_type, file_size_bytes,"
+            + " extract_status) values (?, ?, ?, 'txt', 100, 'done') returning id",
+        Long.class,
+        userId,
+        label,
+        "local://past-applications/" + userId + "/" + UUID.randomUUID() + ".txt");
+  }
+
   public static long experienceCard(JdbcTemplate jdbc, long userId, String type, String title) {
     return jdbc.queryForObject(
         "insert into experience_card (user_id, type, title, data)"

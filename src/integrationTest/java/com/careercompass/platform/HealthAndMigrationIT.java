@@ -27,7 +27,7 @@ class HealthAndMigrationIT extends IntegrationTestBase {
   }
 
   @Test
-  @DisplayName("빈 PostgreSQL 에 Flyway 마이그레이션이 적용되어 테이블 18개가 선다")
+  @DisplayName("빈 PostgreSQL 에 Flyway 마이그레이션이 적용되어 전체 스키마가 선다")
   void migrationAppliesFromScratch() {
     Integer applied =
         jdbc.queryForObject(
@@ -39,8 +39,8 @@ class HealthAndMigrationIT extends IntegrationTestBase {
             "select count(*) from information_schema.tables"
                 + " where table_schema = 'public' and table_type = 'BASE TABLE'",
             Integer.class);
-    // ERD 16 + user_device + refresh_token + flyway_schema_history
-    assertThat(tables).isEqualTo(19);
+    // ERD 16 + user_device + refresh_token + school + job_category + flyway_schema_history
+    assertThat(tables).isEqualTo(21);
   }
 
   @Test
