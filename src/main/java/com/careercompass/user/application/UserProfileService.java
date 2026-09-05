@@ -6,6 +6,8 @@ import com.careercompass.common.exception.BusinessException;
 import com.careercompass.experience.domain.ExperienceCardRepository;
 import com.careercompass.pastapplication.domain.PastApplicationRepository;
 import com.careercompass.user.domain.User;
+import com.careercompass.user.domain.UserConsent;
+import com.careercompass.user.domain.UserConsentRepository;
 import com.careercompass.user.domain.UserJobInterest;
 import com.careercompass.user.domain.UserJobInterestRepository;
 import com.careercompass.user.domain.UserProfile;
@@ -43,6 +45,7 @@ public class UserProfileService {
   private final ExperienceCardRepository experienceCardRepository;
   private final PastApplicationRepository pastApplicationRepository;
   private final ApplicationEventPublisher eventPublisher;
+  private final UserConsentRepository consentRepository;
 
   public UserProfileService(
       UserRepository userRepository,
@@ -52,7 +55,8 @@ public class UserProfileService {
       JobCategoryRepository jobCategoryRepository,
       ExperienceCardRepository experienceCardRepository,
       PastApplicationRepository pastApplicationRepository,
-      ApplicationEventPublisher eventPublisher) {
+      ApplicationEventPublisher eventPublisher,
+      UserConsentRepository consentRepository) {
     this.userRepository = userRepository;
     this.profileRepository = profileRepository;
     this.interestRepository = interestRepository;
@@ -61,6 +65,7 @@ public class UserProfileService {
     this.experienceCardRepository = experienceCardRepository;
     this.pastApplicationRepository = pastApplicationRepository;
     this.eventPublisher = eventPublisher;
+    this.consentRepository = consentRepository;
   }
 
   public record JobInterestItem(String code, int priority) {}
@@ -150,6 +155,16 @@ public class UserProfileService {
     tagRepository.saveAll(normalized.stream().map(t -> new UserTag(userId, t)).toList());
     eventPublisher.publishEvent(new ProfileChanged(userId));
     return assemble(userId);
+  }
+
+  @Transactional
+  public boolean updateConsent(Long userId, boolean modelImprovement) {
+    user(userId); // 존재 확인
+    UserConsent consent =
+        consentRepository.findById(userId).orElseGet(() -> new UserConsent(userId));
+    consent.setModelImprovement(modelImprovement);
+    consentRepository.save(consent);
+    return consent.modelImprovement();
   }
 
   private void refreshOnboarding(UserProfile profile) {

@@ -700,4 +700,5 @@ AI 추천 — 톱 픽 + 강점 기반 + 취약점 보완 카테고리별 최대 
 - v0.2 (2026-09-05) — §5 게시판: detect 처리 상한 ~30초(FE 타임아웃 45초 권장), 등록 즉시 1회 수집, status(active|error)·failCount 로 「수집 오류/일시중지」 구분. §5 공고: `parseStatus` 계약(#27), 검색어 `q`·마감일 범위·`bookmarkedOnly`·`includeExpired` 파라미터 추가, 정렬 축 계약(축 키 없는 행 제외), 상세 `canGenerateApplication` 추가. FE 공유 필요.
 - v0.2 (2026-09-05) — §5 적합도: `scoreUnavailableReason`(profile_incomplete|parsing_failed|analyzing) 계약(#34, FE#100 3분기 지원), breakdown 축 이름 고정·표시 문구는 클라이언트 매핑 유지(#33), 코멘트 실패 시 null·점수는 정상. LLM 장애는 `LLM_UNAVAILABLE`(503) — 목록·프로필 등 비 LLM 기능은 영향 없음(#35). FE 공유 필요.
 - v0.2 (2026-09-05) — §6 지원서: 단건 조회·항목 직접 추가·버전 목록/되돌리기 신설, SSE 이벤트 3종+스냅샷 복원+heartbeat, status 전이 규칙, 글자 수 초과 저장 허용·마지막 쓰기 우선, scoreSnapshot. 장학금·채용 외 생성 거절. FE 공유 필요.
+- v0.2 (2026-09-05) — §7 확정: For You 는 점수 산출 공고만 대상(톱 픽=적합도+마감 D-7 가중, 응답에 title·score 추가), 로드맵은 표본 5명 미만 시 metrics 비움·senior 는 pass+동의 사용자만, Export 의 notion=Notion 호환 마크다운·summary 규칙 기반. §2 `PUT /users/me/consent` 신설(모델 개선 활용 동의, F4-4·#48). FE 공유 필요.
 - v0.1 (2026-05-18) — 초안 작성. 명세서 F1~F4 + 신규 기능 반영.

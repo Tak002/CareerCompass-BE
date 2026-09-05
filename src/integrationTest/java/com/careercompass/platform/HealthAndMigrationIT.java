@@ -40,8 +40,8 @@ class HealthAndMigrationIT extends IntegrationTestBase {
                 + " where table_schema = 'public' and table_type = 'BASE TABLE'",
             Integer.class);
     // ERD 16 + user_device/refresh_token + school/job_category + application_item_version
-    // + flyway_schema_history
-    assertThat(tables).isEqualTo(22);
+    // + user_consent + flyway_schema_history
+    assertThat(tables).isEqualTo(23);
   }
 
   @Test

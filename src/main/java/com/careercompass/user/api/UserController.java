@@ -87,4 +87,18 @@ public class UserController {
       @CurrentUserId Long userId, @Valid @RequestBody PutTagsRequest request) {
     return ApiResponse.success(profileService.replaceTags(userId, request.tags()));
   }
+
+  public record ConsentRequest(@NotNull Boolean modelImprovement) {}
+
+  public record ConsentResponse(boolean modelImprovement) {}
+
+  @Operation(
+      summary = "모델 개선 활용 동의 설정",
+      description = "지원 결과 데이터의 분석 모델 개선 활용·로드맵 senior 코호트 포함 동의 (F4-4, v0.2 신설). 언제든 철회 가능.")
+  @PutMapping("/consent")
+  public ApiResponse<ConsentResponse> putConsent(
+      @CurrentUserId Long userId, @Valid @RequestBody ConsentRequest request) {
+    return ApiResponse.success(
+        new ConsentResponse(profileService.updateConsent(userId, request.modelImprovement())));
+  }
 }
