@@ -2,12 +2,8 @@ package com.careercompass.notification.fcm;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /** 자격증명이 없는 환경의 기본 구현 — 발송 내용을 로그로만 남긴다. */
-@Component
-@ConditionalOnProperty(name = "app.fcm.credentials-path", havingValue = "", matchIfMissing = true)
 public class LoggingFcmSender implements FcmSender {
 
   private static final Logger log = LoggerFactory.getLogger(LoggingFcmSender.class);

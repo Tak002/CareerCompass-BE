@@ -11,19 +11,13 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /** 실제 FCM 발송 (#44) — 서비스 계정 JSON 경로(app.fcm.credentials-path)가 설정된 환경에서만 활성화된다. */
-@Component
-@ConditionalOnProperty(name = "app.fcm.credentials-path")
 public class FirebaseFcmSender implements FcmSender {
 
   private static final Logger log = LoggerFactory.getLogger(FirebaseFcmSender.class);
 
-  public FirebaseFcmSender(@Value("${app.fcm.credentials-path}") String credentialsPath)
-      throws IOException {
+  public FirebaseFcmSender(String credentialsPath) throws IOException {
     if (FirebaseApp.getApps().isEmpty()) {
       try (FileInputStream credentials = new FileInputStream(credentialsPath)) {
         FirebaseApp.initializeApp(
