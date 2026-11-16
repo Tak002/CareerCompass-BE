@@ -1,6 +1,7 @@
 package com.careercompass.auth.jwt;
 
 import com.careercompass.common.api.ErrorCode;
+import com.careercompass.user.domain.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,9 +24,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
   public static final String AUTH_ERROR_ATTRIBUTE = "careercompass.auth.error";
 
   private final JwtProvider jwtProvider;
+  private final UserRepository userRepository;
 
-  public JwtAuthenticationFilter(JwtProvider jwtProvider) {
+  public JwtAuthenticationFilter(JwtProvider jwtProvider, UserRepository userRepository) {
     this.jwtProvider = jwtProvider;
+    this.userRepository = userRepository;
   }
 
   @Override
@@ -37,6 +40,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
       String token = header.substring("Bearer ".length()).trim();
       try {
         Long userId = jwtProvider.parseUserId(token);
+        if (!userRepository.existsByIdAndDeletedAtIsNull(userId)) {
+          // 서명은 맞지만 계정이 지워졌다 — access 토큰은 블랙리스트가 없으므로 여기서 막는다 (#61)
+          request.setAttribute(AUTH_ERROR_ATTRIBUTE, ErrorCode.AUTH_INVALID);
+          chain.doFilter(request, response);
+          return;
+        }
         UsernamePasswordAuthenticationToken authentication =
             new UsernamePasswordAuthenticationToken(
                 userId, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));

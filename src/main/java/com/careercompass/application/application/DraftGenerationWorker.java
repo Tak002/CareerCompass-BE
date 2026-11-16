@@ -50,8 +50,22 @@ public class DraftGenerationWorker {
     this.applicationService = applicationService;
   }
 
+  /** 지금 이 서버에서 생성이 도는 지원서 — 멱등 재호출(#57)이 같은 항목을 두 번 생성(LLM 비용 2배)하지 않게 막는다. */
+  private final java.util.Set<Long> inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
   @Async
   public void generateAsync(Long applicationId) {
+    if (!inFlight.add(applicationId)) {
+      return; // 이미 생성 중 — 재호출은 현재 상태만 돌려받는다
+    }
+    try {
+      generate(applicationId);
+    } finally {
+      inFlight.remove(applicationId);
+    }
+  }
+
+  private void generate(Long applicationId) {
     Application application = applicationRepository.findById(applicationId).orElse(null);
     if (application == null || !application.generating()) {
       return;
@@ -62,17 +76,19 @@ public class DraftGenerationWorker {
     }
     DraftContextBuilder.Context context = contextBuilder.build(application.userId(), posting);
 
-    boolean allDone = true;
     List<ApplicationItem> items =
         itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId);
     for (ApplicationItem item : items) {
       if (!"loading".equals(item.status())) {
         continue;
       }
-      boolean done = draftSingle(application, item, context, application.tone(), null);
-      allDone &= done;
+      draftSingle(application, item, context, application.tone(), null);
     }
 
+    // 이전 실행(재시작 전)에서 실패한 항목도 있을 수 있으니 결과는 행 상태로 다시 센다
+    boolean allDone =
+        itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId).stream()
+            .allMatch(item -> "done".equals(item.status()));
     application.generationFinished(allDone);
     applicationRepository.save(application);
     sseHub.complete(applicationId, application.status());
@@ -145,18 +161,20 @@ public class DraftGenerationWorker {
       if (e.code() != ErrorCode.LLM_UNAVAILABLE) {
         throw e;
       }
-      item.draftFailed();
-      itemRepository.save(item);
-      sseHub.publish(
-          application.id(), new SseHub.Event("item_failed", Map.of("itemId", item.id())));
-      return false;
+      return failItem(application, item, ErrorCode.LLM_UNAVAILABLE);
     } catch (Exception e) {
       log.warn("초안 생성 실패: item={}", item.id(), e);
-      item.draftFailed();
-      itemRepository.save(item);
-      sseHub.publish(
-          application.id(), new SseHub.Event("item_failed", Map.of("itemId", item.id())));
-      return false;
+      return failItem(application, item, ErrorCode.INTERNAL_ERROR);
     }
+  }
+
+  /** 항목 실패 — status=failed 로 남기고 item_failed{itemId, code} 를 보낸다 (#59). code 는 §9 값. */
+  private boolean failItem(Application application, ApplicationItem item, ErrorCode code) {
+    item.draftFailed();
+    itemRepository.save(item);
+    sseHub.publish(
+        application.id(),
+        new SseHub.Event("item_failed", Map.of("itemId", item.id(), "code", code.name())));
+    return false;
   }
 }

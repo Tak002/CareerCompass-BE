@@ -18,6 +18,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,13 +61,31 @@ public class ApplicationService {
 
   public record ApplicationWithItems(Application application, List<ApplicationItem> items) {}
 
+  /** POST /applications 의 결과. reused 면 같은 공고의 진행 중 지원서를 돌려준 것이다(200, #57). */
+  public record CreateResult(ApplicationWithItems pair, boolean reused) {}
+
+  /** 사용자가 확인·수정한 문항 (#58). order 가 없으면 배열 순서를 쓴다. maxChars null = 공고가 제한을 밝히지 않음. */
+  public record ItemInput(Integer order, String question, Integer maxChars) {}
+
+  /** 진행 중으로 보는 상태 — 이 상태의 지원서가 있으면 새로 만들지 않는다 (#57). */
+  public static final List<String> IN_PROGRESS = List.of("generating", "ready", "partial_failed");
+
+  static final int MAX_ITEMS = 20;
+  static final int MAX_QUESTION_CHARS = 500;
+  static final int MAX_MAX_CHARS = 5000;
+
+  /**
+   * 지원서 생성 — 공고당 멱등 (#57). 같은 사용자의 같은 공고에 진행 중 지원서가 있으면 새로 만들지 않고 그것을 돌려준다(이때 tone·items 는 무시된다).
+   * saved 만 있으면 새로 만든다. items 가 오면 그것이 문항의 정본이고 파싱 결과를 다시 읽지 않는다 (#58).
+   */
   @Transactional
-  public ApplicationWithItems create(Long userId, Long postingId, String tone) {
+  public CreateResult create(Long userId, Long postingId, String tone, List<ItemInput> items) {
     String resolvedTone = tone == null ? "formal" : tone;
     if (!TONES.contains(resolvedTone)) {
       throw new BusinessException(
           ErrorCode.INVALID_INPUT, "tone 은 formal/casual/confident 중 하나여야 합니다", "tone");
     }
+    List<ItemInput> normalized = items == null ? null : normalizeItems(items);
     Posting posting = ownedPosting(userId, postingId);
     if (!GENERATABLE_TYPES.contains(posting.type())) {
       // 명세서 F3-3 — 장학금·채용만 지원서 작성 가능 (공모전·대외활동은 지원 방식이 다양)
@@ -74,29 +93,100 @@ public class ApplicationService {
           ErrorCode.INVALID_INPUT, "장학금·채용 공고에서만 지원서를 생성할 수 있습니다", "postingId");
     }
 
-    Application application =
-        applicationRepository.save(new Application(userId, postingId, resolvedTone));
-
-    List<ApplicationItem> items = new ArrayList<>();
-    PostingParsed parsed = parsedRepository.findById(postingId).orElse(null);
-    if (parsed != null && parsed.formQuestions() != null) {
-      int order = 1;
-      for (Map<String, Object> question : parsed.formQuestions()) {
-        Object maxChars = question.get("maxChars");
-        items.add(
-            itemRepository.save(
-                new ApplicationItem(
-                    application.id(),
-                    order++,
-                    String.valueOf(question.get("question")),
-                    maxChars instanceof Number number ? number.intValue() : null)));
-      }
+    Optional<Application> inProgress = findInProgress(userId, postingId);
+    if (inProgress.isPresent()) {
+      Application existing = inProgress.get();
+      return new CreateResult(
+          new ApplicationWithItems(
+              existing, itemRepository.findAllByApplicationIdOrderByItemOrder(existing.id())),
+          true);
     }
-    if (items.isEmpty()) {
+
+    // saveAndFlush — 동시 요청이 부분 유니크 인덱스(uk_application_in_progress)에 걸리면 여기서 바로 드러나게 한다
+    Application application =
+        applicationRepository.saveAndFlush(new Application(userId, postingId, resolvedTone));
+
+    List<ItemInput> questions = normalized != null ? normalized : parsedQuestions(postingId);
+    List<ApplicationItem> created = new ArrayList<>();
+    int order = 1;
+    for (ItemInput question : questions) {
+      created.add(
+          itemRepository.save(
+              new ApplicationItem(
+                  application.id(), order++, question.question(), question.maxChars())));
+    }
+    if (created.isEmpty()) {
       // 양식 미인식 — 항목 없이 시작, 사용자가 직접 추가한다 (#36 계약)
       application.generationFinished(true);
     }
-    return new ApplicationWithItems(application, items);
+    return new CreateResult(new ApplicationWithItems(application, created), false);
+  }
+
+  /** 동시 생성 경합에서 진 요청이 이긴 쪽 지원서를 돌려받는 경로 (#57). */
+  @Transactional(readOnly = true)
+  public Optional<ApplicationWithItems> inProgress(Long userId, Long postingId) {
+    return findInProgress(userId, postingId)
+        .map(
+            app ->
+                new ApplicationWithItems(
+                    app, itemRepository.findAllByApplicationIdOrderByItemOrder(app.id())));
+  }
+
+  private Optional<Application> findInProgress(Long userId, Long postingId) {
+    return applicationRepository
+        .findFirstByUserIdAndPostingIdAndStatusInAndDeletedAtIsNullOrderByIdDesc(
+            userId, postingId, IN_PROGRESS);
+  }
+
+  private List<ItemInput> parsedQuestions(Long postingId) {
+    List<ItemInput> questions = new ArrayList<>();
+    PostingParsed parsed = parsedRepository.findById(postingId).orElse(null);
+    if (parsed != null && parsed.formQuestions() != null) {
+      for (Map<String, Object> question : parsed.formQuestions()) {
+        Object maxChars = question.get("maxChars");
+        questions.add(
+            new ItemInput(
+                null,
+                String.valueOf(question.get("question")),
+                maxChars instanceof Number number ? number.intValue() : null));
+      }
+    }
+    return questions;
+  }
+
+  /** #58 — 상한·형식을 검사하고 order 순으로 정렬한다. 저장 시 1..n 으로 다시 번호를 매긴다. */
+  private List<ItemInput> normalizeItems(List<ItemInput> items) {
+    if (items.size() > MAX_ITEMS) {
+      throw new BusinessException(
+          ErrorCode.INVALID_INPUT, "문항은 최대 " + MAX_ITEMS + "개까지 보낼 수 있습니다", "items");
+    }
+    List<ItemInput> normalized = new ArrayList<>();
+    for (int i = 0; i < items.size(); i++) {
+      ItemInput item = items.get(i);
+      String field = "items[" + i + "]";
+      if (item == null || item.question() == null || item.question().isBlank()) {
+        throw new BusinessException(
+            ErrorCode.INVALID_INPUT, "문항의 question 은 비울 수 없습니다", field + ".question");
+      }
+      String question = item.question().strip();
+      if (question.length() > MAX_QUESTION_CHARS) {
+        throw new BusinessException(
+            ErrorCode.INVALID_INPUT,
+            "문항은 " + MAX_QUESTION_CHARS + "자 이하여야 합니다",
+            field + ".question");
+      }
+      Integer maxChars = item.maxChars();
+      if (maxChars != null && (maxChars < 1 || maxChars > MAX_MAX_CHARS)) {
+        throw new BusinessException(
+            ErrorCode.INVALID_INPUT,
+            "maxChars 는 1~" + MAX_MAX_CHARS + " 또는 null 이어야 합니다",
+            field + ".maxChars");
+      }
+      normalized.add(
+          new ItemInput(item.order() == null ? i + 1 : item.order(), question, maxChars));
+    }
+    normalized.sort(java.util.Comparator.comparingInt(ItemInput::order));
+    return normalized;
   }
 
   @Transactional(readOnly = true)

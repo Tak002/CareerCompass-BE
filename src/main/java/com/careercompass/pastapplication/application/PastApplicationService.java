@@ -68,7 +68,8 @@ public class PastApplicationService {
 
     PastApplication application =
         applicationRepository.save(
-            new PastApplication(userId, label.trim(), uri, fileType, content.length));
+            new PastApplication(
+                userId, label.trim(), uri, fileType, baseName(originalFilename), content.length));
 
     List<PastApplicationItem> items = List.of();
     try {
@@ -122,6 +123,25 @@ public class PastApplicationService {
     return item;
   }
 
+  static final int MAX_LABEL_CHARS = 100; // past_application.label varchar(100)
+
+  /** 라벨 수정 (#60) — 항목 분류 결과와 사용자가 고친 카테고리는 그대로 둔다. */
+  @Transactional
+  public UploadResult relabel(Long userId, Long appId, String label) {
+    if (label == null || label.isBlank()) {
+      throw new BusinessException(ErrorCode.INVALID_INPUT, "label 은 비울 수 없습니다", "label");
+    }
+    String trimmed = label.trim();
+    if (trimmed.length() > MAX_LABEL_CHARS) {
+      throw new BusinessException(
+          ErrorCode.INVALID_INPUT, "label 은 " + MAX_LABEL_CHARS + "자 이하여야 합니다", "label");
+    }
+    PastApplication application = owned(userId, appId);
+    application.relabel(trimmed);
+    return new UploadResult(
+        application, itemRepository.findAllByPastApplicationIdOrderByItemOrder(application.id()));
+  }
+
   @Transactional
   public void delete(Long userId, Long appId) {
     PastApplication application = owned(userId, appId);
@@ -137,6 +157,16 @@ public class PastApplicationService {
     return applicationRepository
         .findByIdAndUserId(appId, userId)
         .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "지원서를 찾을 수 없습니다"));
+  }
+
+  /** 클라이언트가 경로째 보내는 경우가 있어 마지막 조각만 남긴다. 255자(컬럼 길이)로 자른다. */
+  private String baseName(String filename) {
+    if (filename == null || filename.isBlank()) {
+      return null;
+    }
+    String name =
+        filename.substring(Math.max(filename.lastIndexOf('/'), filename.lastIndexOf('\\')) + 1);
+    return name.length() > 255 ? name.substring(name.length() - 255) : name;
   }
 
   private String extension(String filename) {

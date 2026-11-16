@@ -307,8 +307,8 @@ class ApplicationFlowIT extends ApiITBase {
       long deadline = System.currentTimeMillis() + 5000;
       while (System.currentTimeMillis() < deadline && (line = reader.readLine()) != null) {
         received.append(line).append('\n');
-        if (line.contains("complete")) {
-          break;
+        if (received.indexOf("event:complete") >= 0 && line.startsWith("data:")) {
+          break; // complete 의 data 줄까지 읽고 끝낸다 (#59 complete{status})
         }
       }
     } catch (java.io.IOException ignored) {
@@ -316,6 +316,146 @@ class ApplicationFlowIT extends ApiITBase {
     }
     assertThat(received.toString()).contains("event:item_done");
     assertThat(received.toString()).contains("event:complete");
+    // 생성 중에 끝난 경우와 같은 모양 — complete{status} (#59)
+    assertThat(received.toString()).contains("\"status\":\"ready\"");
+  }
+
+  private ResponseEntity<String> createApplication(Session session, Map<String, Object> body) {
+    return call(HttpMethod.POST, "/applications", body, session.accessToken());
+  }
+
+  private int applicationRows(long userId, long postingId) {
+    return jdbc.queryForObject(
+        "select count(*) from application where user_id = ? and posting_id = ?",
+        Integer.class,
+        userId,
+        postingId);
+  }
+
+  @Test
+  @DisplayName("같은 공고로 두 번 호출하면 지원서는 하나 — 두 번째는 200·같은 id, 끝난 답변을 잃지 않는다 (#57)")
+  void createIsIdempotentPerPosting() throws Exception {
+    Session session = login();
+    seedCard(session);
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+
+    ResponseEntity<String> first = createApplication(session, Map.of("postingId", postingId));
+    assertThat(first.getStatusCode().value()).isEqualTo(201);
+    long id = json(first).path("data").path("id").asLong();
+    awaitFinished(session, id);
+
+    ResponseEntity<String> again =
+        createApplication(session, Map.of("postingId", postingId, "tone", "casual"));
+    assertThat(again.getStatusCode().value()).isEqualTo(200);
+    JsonNode data = json(again).path("data");
+    assertThat(data.path("id").asLong()).isEqualTo(id);
+    assertThat(data.path("tone").asText()).isEqualTo("formal"); // 재사용 시 요청의 tone 은 무시
+    assertThat(data.path("items")).hasSize(2);
+    for (JsonNode item : data.path("items")) {
+      assertThat(item.path("answer").asText()).isNotBlank();
+    }
+    assertThat(applicationRows(session.userId(), postingId)).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("동시에 여러 번 호출해도 진행 중 지원서는 하나만 생긴다 (#57)")
+  void concurrentCreateMakesOne() throws Exception {
+    Session session = login();
+    seedCard(session);
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+
+    var pool = java.util.concurrent.Executors.newFixedThreadPool(6);
+    try {
+      var futures =
+          java.util.stream.IntStream.range(0, 6)
+              .mapToObj(
+                  i ->
+                      pool.submit(() -> createApplication(session, Map.of("postingId", postingId))))
+              .toList();
+      java.util.Set<Long> ids = new java.util.HashSet<>();
+      int created = 0;
+      for (var future : futures) {
+        ResponseEntity<String> res = future.get();
+        assertThat(res.getStatusCode().value()).isIn(200, 201);
+        created += res.getStatusCode().value() == 201 ? 1 : 0;
+        ids.add(json(res).path("data").path("id").asLong());
+      }
+      assertThat(created).isEqualTo(1);
+      assertThat(ids).hasSize(1);
+    } finally {
+      pool.shutdown();
+    }
+    assertThat(applicationRows(session.userId(), postingId)).isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("saved 만 있으면 같은 공고에 새 지원서를 만든다 — 201·새 id (#57)")
+  void createAfterSaveMakesNew() throws Exception {
+    Session session = login();
+    seedCard(session);
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+    long first =
+        json(createApplication(session, Map.of("postingId", postingId)))
+            .path("data")
+            .path("id")
+            .asLong();
+    awaitFinished(session, first);
+    call(HttpMethod.POST, "/applications/" + first + "/save", null, session.accessToken());
+
+    ResponseEntity<String> second = createApplication(session, Map.of("postingId", postingId));
+    assertThat(second.getStatusCode().value()).isEqualTo(201);
+    assertThat(json(second).path("data").path("id").asLong()).isNotEqualTo(first);
+  }
+
+  @Test
+  @DisplayName("items 를 실으면 그 문항 그대로 만든다 — order 정렬, maxChars null 유지 (#58)")
+  void createWithEditedItems() throws Exception {
+    Session session = login();
+    seedCard(session);
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+
+    java.util.List<Map<String, Object>> items = new java.util.ArrayList<>();
+    items.add(new java.util.HashMap<>(Map.of("order", 2, "question", "입사 후 포부", "maxChars", 300)));
+    java.util.Map<String, Object> noLimit = new java.util.HashMap<>();
+    noLimit.put("order", 1);
+    noLimit.put("question", "직접 쓴 문항 — 협업 경험");
+    noLimit.put("maxChars", null);
+    items.add(noLimit);
+
+    ResponseEntity<String> res =
+        createApplication(session, Map.of("postingId", postingId, "items", items));
+    assertThat(res.getStatusCode().value()).isEqualTo(201);
+    JsonNode data = awaitFinished(session, json(res).path("data").path("id").asLong());
+    assertThat(data.path("items")).hasSize(2);
+    assertThat(data.path("items").get(0).path("question").asText()).isEqualTo("직접 쓴 문항 — 협업 경험");
+    assertThat(data.path("items").get(0).path("maxChars").isNull()).isTrue();
+    assertThat(data.path("items").get(1).path("question").asText()).isEqualTo("입사 후 포부");
+    assertThat(data.path("items").get(1).path("maxChars").asInt()).isEqualTo(300);
+    assertThat(data.path("items").get(1).path("answer").asText().length()).isLessThanOrEqualTo(300);
+  }
+
+  @Test
+  @DisplayName("items 상한·빈 문항은 INVALID_INPUT 과 필드 경로로 거절된다 (#58)")
+  void createWithInvalidItemsRejected() {
+    Session session = login();
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+
+    java.util.List<Map<String, Object>> tooMany =
+        java.util.stream.IntStream.range(0, 21)
+            .mapToObj(i -> Map.<String, Object>of("question", "문항 " + i))
+            .toList();
+    ResponseEntity<String> overLimit =
+        createApplication(session, Map.of("postingId", postingId, "items", tooMany));
+    assertThat(overLimit.getStatusCode().value()).isEqualTo(400);
+    assertThat(json(overLimit).path("error").path("field").asText()).isEqualTo("items");
+
+    ResponseEntity<String> blank =
+        createApplication(
+            session,
+            Map.of("postingId", postingId, "items", java.util.List.of(Map.of("question", " "))));
+    assertThat(blank.getStatusCode().value()).isEqualTo(400);
+    assertThat(json(blank).path("error").path("field").asText()).isEqualTo("items[0].question");
+    assertThat(applicationRows(session.userId(), postingId)).isZero();
   }
 
   @Test

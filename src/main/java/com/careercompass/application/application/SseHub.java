@@ -22,20 +22,27 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class SseHub {
 
   private static final Logger log = LoggerFactory.getLogger(SseHub.class);
-  private static final long TIMEOUT_MS = 5 * 60 * 1000L;
+
+  /**
+   * 서버 쪽 스트림 상한 — 앱의 대기 상한(스트림 전체 5분, 항목 2분)보다 짧게 둔다 (#59). 서버가 먼저 닫아야 앱이 「끊김」을 실패로 오인하지 않고 POST
+   * /applications 재호출(#57)이나 단건 조회로 이어 받는다.
+   */
+  static final long TIMEOUT_MS = 4 * 60 * 1000L;
 
   public record Event(String name, Object data) {}
 
   private final Map<Long, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
   private final ScheduledExecutorService closer = Executors.newSingleThreadScheduledExecutor();
 
-  public SseEmitter subscribe(Long applicationId, List<Event> snapshot, boolean stillGenerating) {
+  public SseEmitter subscribe(
+      Long applicationId, List<Event> snapshot, boolean stillGenerating, String status) {
     SseEmitter emitter = new SseEmitter(TIMEOUT_MS);
     for (Event event : snapshot) {
       send(emitter, event);
     }
     if (!stillGenerating) {
-      send(emitter, new Event("complete", Map.of("applicationId", applicationId)));
+      // 생성 중에 끝난 경우와 같은 모양 — complete{status} (#59)
+      send(emitter, new Event("complete", Map.of("status", status)));
       // 컨트롤러 반환 전에 complete 하면 컨테이너 async 설정과 경합한다 — 응답이 서고 나서 닫는다
       closer.schedule(emitter::complete, 150, TimeUnit.MILLISECONDS);
       return emitter;

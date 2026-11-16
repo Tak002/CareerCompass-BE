@@ -2,6 +2,7 @@ package com.careercompass.user.api;
 
 import com.careercompass.common.api.ApiResponse;
 import com.careercompass.common.security.CurrentUserId;
+import com.careercompass.user.application.AccountDeletionService;
 import com.careercompass.user.application.UserProfileService;
 import com.careercompass.user.application.UserProfileService.JobInterestItem;
 import com.careercompass.user.application.UserProfileService.Me;
@@ -16,6 +17,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -29,15 +31,29 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
   private final UserProfileService profileService;
+  private final AccountDeletionService accountDeletionService;
 
-  public UserController(UserProfileService profileService) {
+  public UserController(
+      UserProfileService profileService, AccountDeletionService accountDeletionService) {
     this.profileService = profileService;
+    this.accountDeletionService = accountDeletionService;
   }
 
   @Operation(summary = "내 프로필 조회")
   @GetMapping
   public ApiResponse<Me> me(@CurrentUserId Long userId) {
     return ApiResponse.success(profileService.getMe(userId));
+  }
+
+  @Operation(
+      summary = "계정 삭제",
+      description =
+          "즉시 삭제(유예 없음). 프로필·직무·태그·경험 카드·과거 지원서와 원본 파일·지원서와 이력·게시판과 공고·알림과 설정·기기(FCM)·토큰·동의 기록·소셜 연결을"
+              + " 모두 지운다. 이후 그 계정의 access·refresh 토큰은 401 (#61).")
+  @DeleteMapping
+  public ApiResponse<Void> delete(@CurrentUserId Long userId) {
+    accountDeletionService.delete(userId);
+    return ApiResponse.success(null);
   }
 
   public record PatchMeRequest(

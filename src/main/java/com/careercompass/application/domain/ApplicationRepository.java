@@ -12,4 +12,8 @@ public interface ApplicationRepository extends JpaRepository<Application, Long> 
 
   List<Application> findAllByUserIdAndStatusAndDeletedAtIsNullOrderByIdDesc(
       Long userId, String status);
+
+  /** 공고당 진행 중(generating·ready·partial_failed) 지원서 — #57 멱등 생성의 재사용 대상. */
+  Optional<Application> findFirstByUserIdAndPostingIdAndStatusInAndDeletedAtIsNullOrderByIdDesc(
+      Long userId, Long postingId, java.util.Collection<String> statuses);
 }

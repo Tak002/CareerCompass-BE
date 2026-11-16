@@ -109,6 +109,92 @@ class PastApplicationIT extends ApiITBase {
   }
 
   @Test
+  @DisplayName("세 형식 각각 — 업로드·목록 응답의 fileName·format 이 실제 파일과 일치한다 (#60)")
+  void fileNameAndFormatInResponses() throws Exception {
+    Session session = login();
+    byte[] docx;
+    try (XWPFDocument document = new XWPFDocument()) {
+      document.createParagraph().createRun().setText("지원 동기는 성장입니다.");
+      ByteArrayOutputStream out = new ByteArrayOutputStream();
+      document.write(out);
+      docx = out.toByteArray();
+    }
+    byte[] txt = SAMPLE_ESSAY.getBytes(StandardCharsets.UTF_8);
+    // 라벨에 다른 확장자를 넣어 라벨에서 형식을 읽는 우회가 틀린다는 것도 함께 확인한다
+    JsonNode up =
+        json(upload(
+                "/past-applications/upload",
+                "2024 카카오.txt",
+                txt,
+                "2024 카카오.pdf 지원서",
+                session.accessToken()))
+            .path("data");
+    assertThat(up.path("fileName").asText()).isEqualTo("2024 카카오.txt");
+    assertThat(up.path("format").asText()).isEqualTo("txt");
+    upload("/past-applications/upload", "워드.docx", docx, "워드", session.accessToken());
+
+    JsonNode list =
+        json(call(HttpMethod.GET, "/past-applications", null, session.accessToken())).path("data");
+    assertThat(list).hasSize(2);
+    assertThat(list.get(0).path("fileName").asText()).isEqualTo("워드.docx");
+    assertThat(list.get(0).path("format").asText()).isEqualTo("docx");
+    assertThat(list.get(1).path("format").asText()).isEqualTo("txt");
+  }
+
+  @Test
+  @DisplayName("라벨만 고치면 항목과 사용자가 고친 카테고리가 그대로다 (#60)")
+  void relabelKeepsItems() {
+    Session session = login();
+    JsonNode up =
+        json(upload(
+                "/past-applications/upload",
+                "a.txt",
+                SAMPLE_ESSAY.getBytes(StandardCharsets.UTF_8),
+                "오타 있는 라벨",
+                session.accessToken()))
+            .path("data");
+    long appId = up.path("id").asLong();
+    long itemId = up.path("items").get(0).path("id").asLong();
+    call(
+        HttpMethod.PATCH,
+        "/past-applications/" + appId + "/items/" + itemId,
+        Map.of("category", "other"),
+        session.accessToken());
+
+    ResponseEntity<String> res =
+        call(
+            HttpMethod.PATCH,
+            "/past-applications/" + appId,
+            Map.of("label", "  고친 라벨  "),
+            session.accessToken());
+    assertThat(res.getStatusCode().value()).isEqualTo(200);
+    JsonNode data = json(res).path("data");
+    assertThat(data.path("label").asText()).isEqualTo("고친 라벨");
+    assertThat(data.path("items")).hasSize(up.path("items").size());
+    assertThat(data.path("items").get(0).path("category").asText()).isEqualTo("other");
+
+    assertThat(
+            call(
+                    HttpMethod.PATCH,
+                    "/past-applications/" + appId,
+                    Map.of("label", " "),
+                    session.accessToken())
+                .getStatusCode()
+                .value())
+        .isEqualTo(400);
+    Session stranger = login();
+    assertThat(
+            call(
+                    HttpMethod.PATCH,
+                    "/past-applications/" + appId,
+                    Map.of("label", "남의 것"),
+                    stranger.accessToken())
+                .getStatusCode()
+                .value())
+        .isEqualTo(404);
+  }
+
+  @Test
   @DisplayName("허용되지 않는 확장자는 INVALID_INPUT(field=file)")
   void badExtensionRejected() {
     Session session = login();

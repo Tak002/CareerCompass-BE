@@ -44,17 +44,35 @@ public class PastApplicationController {
     }
   }
 
+  /** fileName·format 은 #60 — 목록이 형식 배지를 그릴 수 있게 한다. format 은 pdf|docx|txt. */
   public record AppResponse(
-      Long id, String label, String filePath, String extractStatus, List<ItemResponse> items) {
+      Long id,
+      String label,
+      String fileName,
+      String format,
+      String filePath,
+      String extractStatus,
+      List<ItemResponse> items) {
 
     static AppResponse from(PastApplicationService.UploadResult result) {
       return new AppResponse(
           result.application().id(),
           result.application().label(),
+          result.application().fileName(),
+          result.application().fileType(),
           result.application().filePath(),
           result.application().extractStatus(),
           result.items().stream().map(ItemResponse::from).toList());
     }
+  }
+
+  public record RelabelRequest(String label) {}
+
+  @Operation(summary = "과거 지원서 라벨 수정", description = "라벨만 바꾼다. 항목과 카테고리는 그대로다 (#60).")
+  @PatchMapping("/{id}")
+  public ApiResponse<AppResponse> relabel(
+      @CurrentUserId Long userId, @PathVariable Long id, @RequestBody RelabelRequest request) {
+    return ApiResponse.success(AppResponse.from(service.relabel(userId, id, request.label())));
   }
 
   @Operation(

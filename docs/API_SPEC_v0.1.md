@@ -208,6 +208,15 @@ GET /postings?cursor=eyJ...&limit=20
 - 직무·태그 **개수** 위반(직무 0·4개↑, 태그 0·6개↑)은 `LIMIT_EXCEEDED`(422), 형식 위반(알 수 없는 code, 중복 priority, 빈 태그)은 `INVALID_INPUT`(400).
 - 태그 정규화: 앞뒤 공백 제거·연속 공백 축약 후 중복은 조용히 제거된다.
 
+### `DELETE /users/me` (v0.3 신설, BE #61)
+
+계정 삭제. 응답 200 `{ "ok": true, "data": null }`.
+
+- **즉시 삭제**, 유예 기간 없음. 재인증(최근 로그인 확인)은 요구하지 않는다 — 앱이 확인 대화상자로 막는다.
+- **연쇄 삭제 범위:** 프로필, 희망 직무·관심 태그, 경험 카드, 과거 지원서와 저장소의 원본 파일, 지원서·항목·버전과 지원 이력, 게시판과 수집 공고·파싱 결과·사용자별 공고 상태(읽음·북마크)·적합도, 알림과 알림 설정, 기기(FCM 토큰·지문 등록), refresh 토큰, 모델 개선 동의 기록, 소셜 연결(`users` 행). **남겨 두는 데이터는 없다** — 모델 개선용 익명화 보관도 하지 않는다(#48).
+- 삭제 직후 그 계정의 **access 토큰과 refresh 토큰은 모두 401**(`AUTH_INVALID`)이다. 같은 소셜 계정으로 다시 로그인하면 새 계정으로 시작한다.
+- 앱 밖 삭제 요청(구글 플레이 요구)은 개인정보처리방침에 적힌 문의 채널로 받고, 운영자가 같은 삭제를 실행한다.
+
 ### `GET /meta/schools?q=&limit=` (v0.2 신설, BE #17)
 
 학교 검색(부분 일치). 검색 보조 용도라 커서 없이 `limit`(기본 20, 최대 50)만 지원. `Cache-Control: max-age=86400`.
@@ -294,7 +303,18 @@ label: "2024 카카오 인턴 자소서"
 
 ### `GET /past-applications`
 
-내 과거 지원서 목록.
+내 과거 지원서 목록. 항목 모양은 업로드 201 응답과 같다.
+
+**파일 이름·형식 (v0.3 확정, BE #60):** 업로드 응답과 목록 항목에 `fileName`(올린 원본 파일 이름, 경로는 떼어 낸 마지막 조각)과 `format`(`pdf`·`docx`·`txt`, 실제 파일 확장자 기준)이 실린다. 라벨에서 형식을 읽지 말 것. v0.3 이전에 올린 행은 `fileName` 이 null 일 수 있다.
+
+```json
+{ "id": 7, "label": "2024 카카오 인턴 자소서", "fileName": "2024 카카오.pdf", "format": "pdf",
+  "filePath": "s3://...", "extractStatus": "done", "items": [ ... ] }
+```
+
+### `PATCH /past-applications/{id}` (v0.3 신설, BE #60)
+
+라벨 수정. `{ "label": "고친 라벨" }` → 200, 응답은 목록 항목과 같은 모양. **라벨만 바꾸고 항목·카테고리는 건드리지 않는다.** 빈 라벨·100자 초과는 `INVALID_INPUT`(field=label), 남의 것은 404. 항목 카테고리 조정(`PATCH /past-applications/{appId}/items/{itemId}`)과는 다른 경로다.
 
 ### `PATCH /past-applications/{appId}/items/{itemId}`
 
@@ -480,11 +500,19 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 ```json
 {
   "postingId": 101,
-  "tone": "formal"
+  "tone": "formal",
+  "items": [
+    { "order": 1, "question": "지원 동기를 작성해 주세요", "maxChars": 500 },
+    { "order": 2, "question": "직접 추가한 문항", "maxChars": null }
+  ]
 }
 ```
 
-응답 (201):
+**공고당 멱등 (v0.3 확정, BE #57):** 같은 사용자의 같은 `postingId` 에 `status` 가 `generating`·`ready`·`partial_failed` 인 지원서가 있으면 **새로 만들지 않고 그 지원서를 200 으로 돌려준다**(항목과 지금까지 생성된 `answer` 포함). 이때 요청의 `tone`·`items` 는 무시된다. `saved` 인 것만 있으면 새로 만들고 **201**. 동시 요청에도 하나만 만들어진다(DB 부분 유니크 인덱스). 끊긴 스트림을 이어 받을 때 이 재호출을 써도 되고 `GET /applications/{id}` 를 써도 된다 — 둘 다 보장한다. 재호출 시 서버 재시작 등으로 생성이 멈춰 있던 지원서는 생성이 다시 시작된다.
+
+**문항 확정 (v0.3 확정, BE #58):** `items` 는 선택 필드다. 오면 그것이 문항의 정본이고 서버는 `parsed.formQuestions` 를 다시 읽지 않는다. 오지 않으면 파싱 결과로 만든다. `order` 순으로 정렬해 1..n 으로 다시 번호를 매긴다(`order` 생략 시 배열 순서). `maxChars: null` 은 "공고가 제한을 밝히지 않았다"는 뜻이고 그 문항에만 서버 기본 길이(400~600자)가 적용된다. 빈 배열이면 항목 없이 시작한다(직접 추가 경로). 상한: 문항 20개, 질문 500자, `maxChars` 1~5000 또는 null. 위반은 `INVALID_INPUT` 이고 `field` 가 `items` / `items[i].question` / `items[i].maxChars` 다.
+
+응답 (201 새로 만듦 / 200 진행 중인 것을 돌려줌):
 ```json
 {
   "ok": true,
@@ -500,6 +528,8 @@ URL 입력 시 사이트 구조 자동 감지. 등록 전 미리보기.
 ```
 
 `status`는 `generating` / `ready` / `partial_failed` / `saved`.
+
+**항목 `status` 값 집합 (v0.3 확정, BE #59):** `loading`(생성 중) / `done`(답변 있음 — 생성 완료 또는 사용자 편집) / `failed`(생성 실패, 재생성으로 재시도). 이 셋 말고 다른 값은 보내지 않는다. 실패한 항목은 이후 조회에서도 `failed` 로 보인다.
 
 ### `GET /applications/{id}` (v0.2 신설, BE #37)
 
@@ -517,6 +547,8 @@ data: {"itemId": 2, "answer": "..."}
 **v0.2 확정 (BE #36 #37):**
 
 - 이벤트 3종: `item_done` / `item_failed{itemId}` / `complete{status}`. 15초 간격 heartbeat 주석 전송.
+- **페이로드 (v0.3 확정, BE #59):** `item_done` = `{"itemId", "answer"}`, `item_failed` = `{"itemId", "code"}` — `code` 는 §9 값으로 `LLM_UNAVAILABLE`(AI 장애·한도 초과) 또는 `INTERNAL_ERROR`. `complete` = `{"status"}` — 생성 중에 끝나든, 끝난 뒤 구독하든 같은 모양이다. 별도 `event: status` 는 보내지 않는다(최종 상태는 `complete` 가 싣는다).
+- **타임아웃 (v0.3 확정, BE #59):** 서버는 스트림을 **4분**에 닫는다(앱 상한 5분보다 짧게). heartbeat 는 15초(앱의 항목당 2분 상한보다 짧게). 닫힌 뒤에는 `POST /applications` 재호출 또는 `GET /applications/{id}` 로 현재 상태를 받는다.
 - 구독 시 **이미 끝난 항목의 스냅샷 이벤트를 먼저 보낸다** — 재연결 복원. 생성이 이미 끝난 지원서 구독은 스냅샷+complete 후 즉시 닫힌다. 모바일에서 끊기면 `GET /applications/{id}` 로 동일 상태를 받는다.
 - status 전이: `generating` → 전 항목 성공 `ready` / 일부 실패 `partial_failed` → 최종 저장 `saved`. 항목은 독립 생성 — 하나가 실패해도 나머지는 나간다.
 - 장학금·채용이 아닌 공고의 생성 요청은 `INVALID_INPUT`(field=postingId) 로 거절.

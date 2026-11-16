@@ -29,6 +29,10 @@ public class PastApplication {
   @Column(name = "file_type", nullable = false)
   private String fileType;
 
+  /** 올린 원본 파일 이름 (#60). V5 이전 행은 null. */
+  @Column(name = "file_name")
+  private String fileName;
+
   @Column(name = "file_size_bytes", nullable = false)
   private long fileSizeBytes;
 
@@ -41,11 +45,17 @@ public class PastApplication {
   protected PastApplication() {}
 
   public PastApplication(
-      Long userId, String label, String filePath, String fileType, long fileSizeBytes) {
+      Long userId,
+      String label,
+      String filePath,
+      String fileType,
+      String fileName,
+      long fileSizeBytes) {
     this.userId = userId;
     this.label = label;
     this.filePath = filePath;
     this.fileType = fileType;
+    this.fileName = fileName;
     this.fileSizeBytes = fileSizeBytes;
     this.extractStatus = "pending";
   }
@@ -73,6 +83,15 @@ public class PastApplication {
 
   public String fileType() {
     return fileType;
+  }
+
+  public String fileName() {
+    return fileName;
+  }
+
+  /** 라벨만 고친다 — 항목·카테고리는 건드리지 않는다 (#60). */
+  public void relabel(String label) {
+    this.label = label;
   }
 
   public String extractStatus() {

@@ -7,6 +7,7 @@ import com.careercompass.application.domain.Application;
 import com.careercompass.application.domain.ApplicationItem;
 import com.careercompass.application.domain.ApplicationItemVersion;
 import com.careercompass.common.api.ApiResponse;
+import com.careercompass.common.api.ErrorCode;
 import com.careercompass.common.security.CurrentUserId;
 import com.careercompass.posting.domain.Posting;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,8 +19,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -92,22 +95,36 @@ public class ApplicationController {
         pair.items().stream().map(ItemResponse::from).toList());
   }
 
-  public record CreateRequest(@NotNull Long postingId, String tone) {}
+  public record CreateRequest(
+      @NotNull Long postingId, String tone, List<ApplicationService.ItemInput> items) {}
 
   @Operation(
-      summary = "지원서 생성 (AI 초안 트리거)",
+      summary = "지원서 생성 (AI 초안 트리거) — 공고당 멱등",
       description =
-          "장학금·채용 공고만 가능. 항목은 비동기로 생성되며 진행은 SSE(/stream) 또는 단건 조회로 확인. 양식 미인식이면 items 가 비어 사용자가 직접 추가한다.")
+          "장학금·채용 공고만 가능. 같은 공고에 진행 중(generating·ready·partial_failed) 지원서가 있으면 새로 만들지 않고 그것을 200 으로"
+              + " 돌려준다(#57). 새로 만들면 201. items 를 실으면 그 문항이 정본이다(#58). 항목은 비동기로 생성되며 진행은 SSE(/stream)"
+              + " 또는 단건 조회로 확인.")
   @PostMapping
-  @ResponseStatus(HttpStatus.CREATED)
-  public ApiResponse<ApplicationResponse> create(
+  public ResponseEntity<ApiResponse<ApplicationResponse>> create(
       @CurrentUserId Long userId, @Valid @RequestBody CreateRequest request) {
-    ApplicationService.ApplicationWithItems pair =
-        service.create(userId, request.postingId(), request.tone());
-    if (!pair.items().isEmpty()) {
+    ApplicationService.CreateResult result;
+    try {
+      result = service.create(userId, request.postingId(), request.tone(), request.items());
+    } catch (DataIntegrityViolationException race) {
+      // 같은 공고로 동시에 두 요청이 왔다 — 먼저 만든 쪽을 돌려준다 (#57, uk_application_in_progress)
+      result =
+          service
+              .inProgress(userId, request.postingId())
+              .map(pair -> new ApplicationService.CreateResult(pair, true))
+              .orElseThrow(() -> race);
+    }
+    ApplicationService.ApplicationWithItems pair = result.pair();
+    // 재사용된 지원서라도 생성이 멈춰 있으면(서버 재시작 등) 다시 돌린다. 이미 도는 중이면 워커가 무시한다.
+    if (pair.application().generating() && !pair.items().isEmpty()) {
       worker.generateAsync(pair.application().id());
     }
-    return ApiResponse.success(toResponse(pair));
+    return ResponseEntity.status(result.reused() ? HttpStatus.OK : HttpStatus.CREATED)
+        .body(ApiResponse.success(toResponse(pair)));
   }
 
   @Operation(summary = "지원 이력 목록", description = "status 필터 지원. 공고 제목·유형·적합도 스냅샷·결과 포함.")
@@ -139,10 +156,15 @@ public class ApplicationController {
                 "item_done",
                 Map.of("itemId", item.id(), "answer", item.answer() == null ? "" : item.answer())));
       } else if ("failed".equals(item.status())) {
-        snapshot.add(new SseHub.Event("item_failed", Map.of("itemId", item.id())));
+        // 실패 원인은 행에 남기지 않으므로 복원 스냅샷의 code 는 LLM_UNAVAILABLE 로 고정한다 (#59)
+        snapshot.add(
+            new SseHub.Event(
+                "item_failed",
+                Map.of("itemId", item.id(), "code", ErrorCode.LLM_UNAVAILABLE.name())));
       }
     }
-    return sseHub.subscribe(id, snapshot, pair.application().generating());
+    return sseHub.subscribe(
+        id, snapshot, pair.application().generating(), pair.application().status());
   }
 
   public record AddItemRequest(@NotBlank String question, Integer maxChars) {}
