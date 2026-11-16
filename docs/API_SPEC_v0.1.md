@@ -266,6 +266,18 @@ GET /postings?cursor=eyJ...&limit=20
 
 경험 카드 생성. `type`은 `project` / `award` / `intern` / `activity` / `cert` 중 하나.
 
+**유형별 `data` 키 (v0.3 — FE `ExperienceMapper` 가 보내는 이름, `*` 는 서버 필수):**
+
+| 유형 | `data` 키 | 기간 |
+|---|---|---|
+| project | `role`, `techs`(문자열 배열), `summary`, `link` | `startDate*` |
+| award | `contestName*`, `rank*`(v0.2 이름 `prize` 도 받음), `year`, `organizer` | 없음 |
+| intern | `company*`, `role*`, `summary` | `startDate*` |
+| activity | `organization*`, `role`, `summary` — 활동명은 `title` | 선택 |
+| cert | `issuer`, `acquiredYearMonth`(`YYYY-MM`) — 자격증명은 `title` | 없음 |
+
+v0.2 는 award 의 `prize`·activity 의 `activityName`·cert 의 `certName` 을 필수로 요구해 앱에서 세 유형 저장이 400 이었다.
+
 요청 (프로젝트 예시):
 ```json
 {

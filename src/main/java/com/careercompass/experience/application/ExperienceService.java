@@ -22,11 +22,14 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <ul>
  *   <li>project — (기간: startDate 필수)
- *   <li>award — contestName(공모전명)·prize(수상 등급)
+ *   <li>award — contestName(공모전명)·rank(수상 등급, v0.2 이름 prize 도 받음)
  *   <li>intern — company(회사명)·role(직무), startDate 필수
- *   <li>activity — activityName(활동명)·organization(기관명)
- *   <li>cert — certName(자격증명)
+ *   <li>activity — organization(기관명). 활동명은 카드 제목
+ *   <li>cert — 필수 키 없음. 자격증명은 카드 제목(issuer·acquiredYearMonth 는 선택)
  * </ul>
+ *
+ * <p>키 이름은 v0.3 에서 FE(core/data ExperienceMapper)가 실제로 보내는 이름에 맞췄다 — 전에는 award 의 prize·activity 의
+ * activityName·cert 의 certName 을 요구해 앱에서 세 유형 카드 저장이 400 으로 실패했다.
  */
 @Service
 public class ExperienceService {
@@ -34,13 +37,16 @@ public class ExperienceService {
   public static final String SORT = "created_desc";
   private static final int MAX_CARDS = 30;
   private static final Set<String> TYPES = Set.of("project", "award", "intern", "activity", "cert");
-  private static final Map<String, List<String>> REQUIRED_DATA_KEYS =
+
+  /** 유형별 필수 키 — 바깥 목록의 각 원소는 「이 중 하나는 있어야 한다」. 에러 field 는 첫 이름. */
+  private static final Map<String, List<List<String>>> REQUIRED_DATA_KEYS =
       Map.of(
           "project", List.of(),
-          "award", List.of("contestName", "prize"),
-          "intern", List.of("company", "role"),
-          "activity", List.of("activityName", "organization"),
-          "cert", List.of("certName"));
+          "award", List.of(List.of("contestName"), List.of("rank", "prize")),
+          "intern", List.of(List.of("company"), List.of("role")),
+          "activity", List.of(List.of("organization")),
+          "cert", List.of());
+
   private static final Set<String> START_DATE_REQUIRED = Set.of("project", "intern");
 
   private final ExperienceCardRepository repository;
@@ -139,9 +145,13 @@ public class ExperienceService {
     if (START_DATE_REQUIRED.contains(type) && startDate == null) {
       throw new BusinessException(ErrorCode.INVALID_INPUT, "기간(시작일)은 필수입니다", "startDate");
     }
-    for (String key : REQUIRED_DATA_KEYS.get(type)) {
-      Object value = data == null ? null : data.get(key);
-      if (value == null || (value instanceof String s && s.isBlank())) {
+    for (List<String> anyOf : REQUIRED_DATA_KEYS.get(type)) {
+      boolean present =
+          anyOf.stream()
+              .map(key -> data == null ? null : data.get(key))
+              .anyMatch(value -> value != null && !(value instanceof String s && s.isBlank()));
+      if (!present) {
+        String key = anyOf.get(0);
         throw new BusinessException(
             ErrorCode.INVALID_INPUT, "필수 필드가 비어 있습니다: " + key, "data." + key);
       }

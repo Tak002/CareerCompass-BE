@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.careercompass.support.ApiITBase;
 import com.careercompass.support.TestFixtures;
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,20 +24,19 @@ class ExperienceIT extends ApiITBase {
   }
 
   @Test
-  @DisplayName("유형별 필수 필드 — award 는 prize 누락 시 field=data.prize, intern 은 startDate 필수")
+  @DisplayName("유형별 필수 필드 — award 는 rank 누락 시 field=data.rank, intern 은 startDate 필수")
   void requiredFieldsPerType() {
     Session session = login();
 
-    ResponseEntity<String> awardMissingPrize =
+    ResponseEntity<String> awardMissingRank =
         createCard(
             session,
             Map.of(
                 "type", "award",
                 "title", "교내 해커톤",
                 "data", Map.of("contestName", "건국 해커톤")));
-    assertThat(awardMissingPrize.getStatusCode().value()).isEqualTo(400);
-    assertThat(json(awardMissingPrize).path("error").path("field").asText())
-        .isEqualTo("data.prize");
+    assertThat(awardMissingRank.getStatusCode().value()).isEqualTo(400);
+    assertThat(json(awardMissingRank).path("error").path("field").asText()).isEqualTo("data.rank");
 
     ResponseEntity<String> internMissingStart =
         createCard(
@@ -56,7 +56,41 @@ class ExperienceIT extends ApiITBase {
                 "type", "award",
                 "title", "교내 해커톤",
                 "data", Map.of("contestName", "건국 해커톤", "prize", "대상")));
-    assertThat(ok.getStatusCode().value()).isEqualTo(201);
+    assertThat(ok.getStatusCode().value()).isEqualTo(201); // v0.2 이름 prize 도 받는다
+  }
+
+  @Test
+  @DisplayName("FE 가 실제로 보내는 data 키로 다섯 유형 모두 저장된다 (v0.3, FE ExperienceMapper)")
+  void feWireKeysAccepted() {
+    Session session = login();
+    List<Map<String, Object>> bodies =
+        List.of(
+            Map.of(
+                "type", "project",
+                "title", "CareerCompass",
+                "startDate", "2026-03-01",
+                "data", Map.of("role", "백엔드", "techs", List.of("Spring"), "summary", "API")),
+            Map.of(
+                "type", "award",
+                "title", "교내 해커톤 대상",
+                "data", Map.of("contestName", "건국 해커톤", "rank", "대상", "year", 2026)),
+            Map.of(
+                "type", "intern",
+                "title", "백엔드 인턴",
+                "startDate", "2026-07-01",
+                "data", Map.of("company", "카카오", "role", "백엔드")),
+            Map.of(
+                "type", "activity",
+                "title", "멋쟁이사자처럼 14기",
+                "data", Map.of("organization", "멋쟁이사자처럼", "role", "운영진")),
+            Map.of(
+                "type", "cert",
+                "title", "정보처리기사",
+                "data", Map.of("issuer", "한국산업인력공단", "acquiredYearMonth", "2026-06")));
+    for (Map<String, Object> body : bodies) {
+      ResponseEntity<String> res = createCard(session, body);
+      assertThat(res.getStatusCode().value()).as(body.get("type").toString()).isEqualTo(201);
+    }
   }
 
   @Test

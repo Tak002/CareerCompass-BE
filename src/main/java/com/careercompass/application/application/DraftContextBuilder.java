@@ -148,7 +148,19 @@ public class DraftContextBuilder {
   private String cardText(ExperienceCard card) {
     StringBuilder sb = new StringBuilder(card.title());
     if (card.data() != null) {
-      Set<String> keys = Set.of("summary", "role", "company", "contestName", "prize", "certName");
+      // FE 가 보내는 키(rank·organization·issuer·techs)와 v0.2 이름(prize·certName)을 함께 읽는다
+      Set<String> keys =
+          Set.of(
+              "summary",
+              "role",
+              "company",
+              "contestName",
+              "rank",
+              "prize",
+              "organization",
+              "issuer",
+              "techs",
+              "certName");
       card.data()
           .forEach(
               (key, value) -> {
