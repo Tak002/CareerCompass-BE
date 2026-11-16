@@ -222,6 +222,23 @@ public class ApplicationService {
     return item;
   }
 
+  /** 재생성 준비 (#38) — 항목 loading, 지원서 generating. 저장본이면 공고당 하나 규칙(#57)을 먼저 확인한다. */
+  @Transactional
+  public ApplicationItem markRegenerating(Long userId, Long applicationId, Long itemId) {
+    Application application = owned(userId, applicationId);
+    ApplicationItem item = ownedItem(userId, applicationId, itemId);
+    if ("saved".equals(application.status())
+        && findInProgress(application.userId(), application.postingId())
+            .filter(other -> !other.id().equals(application.id()))
+            .isPresent()) {
+      throw new BusinessException(
+          ErrorCode.INVALID_INPUT, "같은 공고에 작성 중인 지원서가 있어 이 저장본은 재생성할 수 없습니다", "id");
+    }
+    application.restartGeneration();
+    item.startRegenerate();
+    return item;
+  }
+
   /**
    * 저장본을 다시 고치면 ready 로 돌아간다 (FE canon 「지원서 규칙」). 같은 공고에 이미 다른 진행 중 지원서가 있으면 공고당 하나 규칙(#57)을 지키려
    * saved 로 둔다.

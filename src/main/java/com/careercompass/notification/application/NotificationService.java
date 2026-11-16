@@ -41,17 +41,65 @@ public class NotificationService {
   private final FcmSender fcmSender;
   private final Clock clock;
 
+  private final com.careercompass.board.domain.BoardRepository boardRepository;
+
   public NotificationService(
       NotificationRepository notificationRepository,
       NotificationSettingRepository settingRepository,
       UserDeviceRepository deviceRepository,
       FcmSender fcmSender,
-      Clock clock) {
+      Clock clock,
+      com.careercompass.board.domain.BoardRepository boardRepository) {
     this.notificationRepository = notificationRepository;
     this.settingRepository = settingRepository;
     this.deviceRepository = deviceRepository;
     this.fcmSender = fcmSender;
     this.clock = clock;
+    this.boardRepository = boardRepository;
+  }
+
+  /**
+   * perBoard 의 바깥 모양 (#63) — 지금 있는 내 게시판 전부를 {boardId, enabled} 로 낸다. 기록이 없으면 켜짐, 지워진 게시판은 빠진다. 그래서
+   * 화면에 「모르는 boardId」가 생기지 않는다.
+   */
+  @Transactional(readOnly = true)
+  public List<java.util.Map<String, Object>> perBoardView(
+      Long userId, NotificationSetting setting) {
+    List<java.util.Map<String, Object>> view = new java.util.ArrayList<>();
+    for (com.careercompass.board.domain.Board board :
+        boardRepository.findAllByUserIdOrderById(userId)) {
+      java.util.Map<String, Object> entry = new java.util.LinkedHashMap<>();
+      entry.put("boardId", board.id());
+      entry.put("enabled", setting.boardEnabled(board.id()));
+      view.add(entry);
+    }
+    return view;
+  }
+
+  /**
+   * PUT 의 perBoard 병합 (#63) — 요청에 실린 내 게시판만 바꾸고, 빠진 게시판은 직전 값을 지킨다. 남의·없는 boardId 는 버린다. 전체 교체로 두면
+   * 화면이 그리지 못해 빠뜨린 게시판의 OFF 가 저장 한 번에 조용히 켜진다.
+   */
+  private List<java.util.Map<String, Object>> mergePerBoard(
+      Long userId, NotificationSetting setting, List<java.util.Map<String, Object>> requested) {
+    java.util.Map<Long, Boolean> requestedById = new java.util.HashMap<>();
+    if (requested != null) {
+      for (java.util.Map<String, Object> entry : requested) {
+        if (entry != null
+            && entry.get("boardId") instanceof Number id
+            && entry.get("enabled") instanceof Boolean enabled) {
+          requestedById.put(id.longValue(), enabled);
+        }
+      }
+    }
+    List<java.util.Map<String, Object>> merged = perBoardView(userId, setting);
+    for (java.util.Map<String, Object> entry : merged) {
+      Long id = ((Number) entry.get("boardId")).longValue();
+      if (requestedById.containsKey(id)) {
+        entry.put("enabled", requestedById.get(id));
+      }
+    }
+    return merged;
   }
 
   /**
@@ -176,7 +224,14 @@ public class NotificationService {
       List<java.util.Map<String, Object>> perBoard) {
     NotificationSetting setting = settingOf(userId);
     setting.update(
-        newPosting, dueSoon, boardError, weeklyReport, quietStart, quietEnd, weekendOff, perBoard);
+        newPosting,
+        dueSoon,
+        boardError,
+        weeklyReport,
+        quietStart,
+        quietEnd,
+        weekendOff,
+        perBoard == null ? null : mergePerBoard(userId, setting, perBoard));
     return settingRepository.save(setting);
   }
 

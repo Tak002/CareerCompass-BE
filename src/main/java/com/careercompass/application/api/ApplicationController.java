@@ -213,9 +213,26 @@ public class ApplicationController {
       @RequestBody(required = false) RegenerateRequest request) {
     String tone = request == null ? null : request.tone();
     List<Long> emphasize = request == null ? null : request.emphasizeCardIds();
-    return ApiResponse.success(
-        ItemResponse.from(worker.regenerate(userId, id, itemId, tone, emphasize)));
+    worker.prepareRegenerate(userId, id, itemId, tone, emphasize);
+    worker.generateAsync(id);
+    // 앱의 읽기 타임아웃(10초)보다 짧게만 기다린다. 그 안에 끝나면 done(또는 failed), 아니면 loading 으로 답하고
+    // 생성은 계속된다 — 앱은 loading 이면 POST /applications 를 다시 불러 스트림으로 받는다.
+    long deadline = System.currentTimeMillis() + REGENERATE_WAIT_MS;
+    ApplicationItem item = service.getItem(userId, id, itemId);
+    while ("loading".equals(item.status()) && System.currentTimeMillis() < deadline) {
+      try {
+        Thread.sleep(100);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
+      }
+      item = service.getItem(userId, id, itemId);
+    }
+    return ApiResponse.success(ItemResponse.from(item));
   }
+
+  /** 재생성 응답을 기다리는 상한 — FE read 타임아웃 10초보다 여유 있게 짧게. */
+  static final long REGENERATE_WAIT_MS = 7_000;
 
   public record EditItemRequest(String answer) {}
 

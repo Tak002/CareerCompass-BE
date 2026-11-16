@@ -98,7 +98,8 @@ public class NotificationController {
       boolean weekendOff,
       List<Map<String, Object>> perBoard) {
 
-    static SettingsResponse from(NotificationSetting setting) {
+    static SettingsResponse from(
+        NotificationSetting setting, List<Map<String, Object>> perBoardView) {
       QuietHours quiet =
           setting.quietStart() == null || setting.quietEnd() == null
               ? null
@@ -110,14 +111,16 @@ public class NotificationController {
           setting.weeklyReport(),
           quiet,
           setting.weekendOff(),
-          setting.perBoard());
+          perBoardView);
     }
   }
 
   @Operation(summary = "알림 설정 조회", description = "기본값: 신규·마감·수집오류 ON, 주간 리포트 OFF.")
   @GetMapping("/settings")
   public ApiResponse<SettingsResponse> getSettings(@CurrentUserId Long userId) {
-    return ApiResponse.success(SettingsResponse.from(service.settingOf(userId)));
+    NotificationSetting setting = service.settingOf(userId);
+    return ApiResponse.success(
+        SettingsResponse.from(setting, service.perBoardView(userId, setting)));
   }
 
   @Operation(
@@ -142,7 +145,8 @@ public class NotificationController {
             quietEnd,
             payload.weekendOff(),
             payload.perBoard());
-    return ApiResponse.success(SettingsResponse.from(updated));
+    return ApiResponse.success(
+        SettingsResponse.from(updated, service.perBoardView(userId, updated)));
   }
 
   public record FcmTokenRequest(@NotBlank String deviceId, @NotBlank String fcmToken) {}

@@ -88,7 +88,12 @@ public class ApplicationItem {
   }
 
   public void draftFailed() {
-    this.status = "failed";
+    this.status = "failed"; // 이전 답(answer)은 지우지 않는다 — 재생성 실패에도 사용자의 본문이 남는다
+  }
+
+  /** 재생성 시작 (#38) — 생성 중 표시만 하고 지금 답은 둔다. 성공하면 버전으로 보관된 뒤 교체된다. */
+  public void startRegenerate() {
+    this.status = "loading";
   }
 
   public void edit(String answer) {

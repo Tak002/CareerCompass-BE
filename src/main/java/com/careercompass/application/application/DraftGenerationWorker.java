@@ -53,73 +53,101 @@ public class DraftGenerationWorker {
   /** 지금 이 서버에서 생성이 도는 지원서 — 멱등 재호출(#57)이 같은 항목을 두 번 생성(LLM 비용 2배)하지 않게 막는다. */
   private final java.util.Set<Long> inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+  /** 재생성 요청의 옵션 — 항목 id 별로 워커가 꺼내 쓴다. */
+  private record RegenRequest(String tone, List<Long> emphasizeCardIds) {}
+
+  private final Map<Long, RegenRequest> regenRequests =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  /**
+   * 비동기 생성. 같은 지원서에 이미 돌고 있으면 그쪽이 새 loading 항목까지 이어 처리한다. 끝난 뒤에도 그 사이 생긴 loading 항목(재생성)이 있으면 다시 돈다
+   * — 재생성 표시(커밋)가 이 호출보다 먼저 일어나므로 빠지는 항목이 없다.
+   */
   @Async
   public void generateAsync(Long applicationId) {
-    if (!inFlight.add(applicationId)) {
-      return; // 이미 생성 중 — 재호출은 현재 상태만 돌려받는다
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (!inFlight.add(applicationId)) {
+        return; // 이미 생성 중 — 도는 쪽이 이어 처리한다
+      }
+      try {
+        generate(applicationId);
+      } finally {
+        inFlight.remove(applicationId);
+      }
+      if (!needsGeneration(applicationId)) {
+        return;
+      }
     }
-    try {
-      generate(applicationId);
-    } finally {
-      inFlight.remove(applicationId);
-    }
+  }
+
+  private boolean needsGeneration(Long applicationId) {
+    return applicationRepository
+        .findById(applicationId)
+        .filter(Application::generating)
+        .map(
+            app ->
+                itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId).stream()
+                    .anyMatch(item -> "loading".equals(item.status())))
+        .orElse(false);
   }
 
   private void generate(Long applicationId) {
-    Application application = applicationRepository.findById(applicationId).orElse(null);
-    if (application == null || !application.generating()) {
-      return;
-    }
-    Posting posting = postingRepository.findById(application.postingId()).orElse(null);
-    if (posting == null) {
-      return;
-    }
-    DraftContextBuilder.Context context = contextBuilder.build(application.userId(), posting);
-
-    List<ApplicationItem> items =
-        itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId);
-    for (ApplicationItem item : items) {
-      if (!"loading".equals(item.status())) {
-        continue;
+    // 도는 중에 재생성으로 새 loading 항목이 생길 수 있어 남은 것이 없을 때까지 돈다
+    for (int round = 0; round < 10; round++) {
+      Application application = applicationRepository.findById(applicationId).orElse(null);
+      if (application == null || !application.generating()) {
+        return;
       }
-      draftSingle(application, item, context, application.tone(), null);
+      Posting posting = postingRepository.findById(application.postingId()).orElse(null);
+      if (posting == null) {
+        return;
+      }
+      List<ApplicationItem> loading =
+          itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId).stream()
+              .filter(item -> "loading".equals(item.status()))
+              .toList();
+      if (loading.isEmpty()) {
+        // 이전 실행(재시작 전)에서 실패한 항목도 있을 수 있으니 결과는 행 상태로 센다
+        boolean allDone =
+            itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId).stream()
+                .allMatch(item -> "done".equals(item.status()));
+        application.generationFinished(allDone);
+        applicationRepository.save(application);
+        sseHub.complete(applicationId, application.status());
+        return;
+      }
+      DraftContextBuilder.Context context = contextBuilder.build(application.userId(), posting);
+      for (ApplicationItem item : loading) {
+        RegenRequest regen = regenRequests.remove(item.id());
+        String tone = regen == null || regen.tone() == null ? application.tone() : regen.tone();
+        draftSingle(
+            application,
+            item,
+            context,
+            tone,
+            regen == null ? null : regen.emphasizeCardIds(),
+            regen != null);
+      }
     }
-
-    // 이전 실행(재시작 전)에서 실패한 항목도 있을 수 있으니 결과는 행 상태로 다시 센다
-    boolean allDone =
-        itemRepository.findAllByApplicationIdOrderByItemOrder(applicationId).stream()
-            .allMatch(item -> "done".equals(item.status()));
-    application.generationFinished(allDone);
-    applicationRepository.save(application);
-    sseHub.complete(applicationId, application.status());
   }
 
-  /** 재생성 (#38) — 새 답변 생성 성공 시에만 이전 버전을 보관하고 교체한다. LLM 장애는 503 으로 전파되고 기존 답변은 유지된다(항목별 재시도 가능). */
-  public ApplicationItem regenerate(
+  /**
+   * 재생성 준비 (#38) — 항목을 loading 으로, 지원서를 generating 으로 돌리고 옵션을 맡긴다. 생성은 {@link #generateAsync} 가 한다.
+   * 성공하면 이전 답이 버전으로 보관되고, 실패하면 이전 답은 그대로 두고 항목만 failed 가 된다.
+   */
+  public ApplicationItem prepareRegenerate(
       Long userId, Long applicationId, Long itemId, String tone, List<Long> emphasizeCardIds) {
     if (tone != null && !ApplicationService.TONES.contains(tone)) {
       throw new BusinessException(
           ErrorCode.INVALID_INPUT, "tone 은 formal/casual/confident 중 하나여야 합니다", "tone");
     }
-    Application application = applicationService.get(userId, applicationId).application();
-    ApplicationItem item = applicationService.getItem(userId, applicationId, itemId);
-    Posting posting = postingRepository.findById(application.postingId()).orElseThrow();
-    DraftContextBuilder.Context context = contextBuilder.build(userId, posting);
-    String resolvedTone = tone == null ? application.tone() : tone;
-
-    List<String> summaries =
-        contextBuilder.summariesFor(userId, context, item.question(), emphasizeCardIds);
-    String answer =
-        llmGateway.draftAnswer(
-            item.question(),
-            item.maxChars(),
-            resolvedTone,
-            context.postingTitle(),
-            context.keywords(),
-            summaries); // 실패 시 여기서 503 전파 — 아래 보관·교체는 실행되지 않는다
-
-    applicationService.archiveVersion(itemId, item.answer(), application.tone());
-    return applicationService.editItem(userId, applicationId, itemId, answer);
+    regenRequests.put(itemId, new RegenRequest(tone, emphasizeCardIds));
+    try {
+      return applicationService.markRegenerating(userId, applicationId, itemId);
+    } catch (RuntimeException e) {
+      regenRequests.remove(itemId);
+      throw e;
+    }
   }
 
   /** 수동 추가 항목의 초안 생성 (#36) — 실패하면 failed 로 남고 재생성으로 재시도한다. */
@@ -128,17 +156,19 @@ public class DraftGenerationWorker {
     ApplicationItem item = applicationService.getItem(userId, applicationId, itemId);
     Posting posting = postingRepository.findById(application.postingId()).orElseThrow();
     DraftContextBuilder.Context context = contextBuilder.build(userId, posting);
-    draftSingle(application, item, context, application.tone(), null);
+    draftSingle(application, item, context, application.tone(), null, false);
     return itemRepository.findById(item.id()).orElse(item);
   }
 
-  /** 단일 항목 생성 — 초기 일괄 생성이 쓰는 공통 경로. */
+  /** 단일 항목 생성 — 초기 일괄 생성과 재생성이 쓰는 공통 경로. 재생성이면 성공 시에만 이전 답을 버전으로 보관한다. */
   public boolean draftSingle(
       Application application,
       ApplicationItem item,
       DraftContextBuilder.Context context,
       String tone,
-      List<Long> emphasizeCardIds) {
+      List<Long> emphasizeCardIds,
+      boolean archivePrevious) {
+    String previous = item.answer();
     try {
       List<String> summaries =
           contextBuilder.summariesFor(
@@ -151,6 +181,9 @@ public class DraftGenerationWorker {
               context.postingTitle(),
               context.keywords(),
               summaries);
+      if (archivePrevious) {
+        applicationService.archiveVersion(item.id(), previous, application.tone());
+      }
       item.draftReady(answer);
       itemRepository.save(item);
       sseHub.publish(

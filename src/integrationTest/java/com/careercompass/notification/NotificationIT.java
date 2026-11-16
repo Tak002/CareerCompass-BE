@@ -250,4 +250,65 @@ class NotificationIT extends ApiITBase {
             session.userId());
     assertThat(token).isEqualTo("fcm-refreshed");
   }
+
+  private Map<Long, Boolean> perBoard(JsonNode settings) {
+    Map<Long, Boolean> out = new java.util.HashMap<>();
+    settings
+        .path("perBoard")
+        .forEach(e -> out.put(e.path("boardId").asLong(), e.path("enabled").asBoolean()));
+    return out;
+  }
+
+  @Test
+  @DisplayName("게시판을 지운 뒤 설정을 조회·저장해도 남은 게시판의 ON/OFF 는 그대로다 (#63)")
+  void perBoardSurvivesDeletionAndPartialPut() {
+    Session session = login();
+    long b1 = TestFixtures.board(jdbc, session.userId(), "https://n.local/" + UUID.randomUUID());
+    long b2 = TestFixtures.board(jdbc, session.userId(), "https://n.local/" + UUID.randomUUID());
+    long b3 = TestFixtures.board(jdbc, session.userId(), "https://n.local/" + UUID.randomUUID());
+
+    // 조회는 지금 있는 게시판 전부를 낸다 — 기록이 없으면 켜짐
+    JsonNode initial =
+        json(call(HttpMethod.GET, "/notifications/settings", null, session.accessToken()))
+            .path("data");
+    assertThat(perBoard(initial))
+        .containsEntry(b1, true)
+        .containsEntry(b2, true)
+        .containsEntry(b3, true);
+
+    call(
+        HttpMethod.PUT,
+        "/notifications/settings",
+        Map.of(
+            "perBoard",
+            List.of(
+                Map.of("boardId", b1, "enabled", false), Map.of("boardId", b2, "enabled", false))),
+        session.accessToken());
+    call(HttpMethod.DELETE, "/boards/" + b1, null, session.accessToken());
+
+    JsonNode afterDelete =
+        json(call(HttpMethod.GET, "/notifications/settings", null, session.accessToken()))
+            .path("data");
+    assertThat(perBoard(afterDelete))
+        .containsOnlyKeys(b2, b3)
+        .containsEntry(b2, false)
+        .containsEntry(b3, true);
+
+    // b2 를 빼고 b3 만, 그리고 모르는 boardId 하나 — b2 의 OFF 는 지켜지고 모르는 id 는 버려진다
+    JsonNode saved =
+        json(call(
+                HttpMethod.PUT,
+                "/notifications/settings",
+                Map.of(
+                    "perBoard",
+                    List.of(
+                        Map.of("boardId", b3, "enabled", false),
+                        Map.of("boardId", 987654321L, "enabled", false))),
+                session.accessToken()))
+            .path("data");
+    assertThat(perBoard(saved))
+        .containsOnlyKeys(b2, b3)
+        .containsEntry(b2, false)
+        .containsEntry(b3, false);
+  }
 }

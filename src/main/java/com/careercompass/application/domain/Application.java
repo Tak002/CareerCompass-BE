@@ -124,6 +124,11 @@ public class Application {
     this.savedAt = at;
   }
 
+  /** 항목 재생성으로 다시 생성 중이 된다 (#38). 저장본이었으면 저장 상태를 벗어난다(다시 편집과 같은 규칙). */
+  public void restartGeneration() {
+    this.status = "generating";
+  }
+
   /** 저장본을 다시 편집 — ready 로 되돌린다. savedAt 은 마지막 저장 시각으로 남긴다. */
   public void reopen() {
     if ("saved".equals(status)) {
