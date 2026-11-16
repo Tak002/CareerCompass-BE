@@ -71,7 +71,19 @@ public class AuthService {
       Long userId,
       String email,
       String name,
-      boolean onboardingDone) {}
+      boolean onboardingDone,
+      boolean created) {
+
+    /** FE 가 온보딩과 피드를 가르는 값 — 처음 가입했거나 온보딩을 마치지 않았으면 true. */
+    public boolean isNewUser() {
+      return created || !onboardingDone;
+    }
+  }
+
+  /** access 토큰 수명(초) — FE 가 만료 60초 전 미리 갱신하는 기준(expiresIn). */
+  public long accessTokenTtlSeconds() {
+    return jwtProperties.accessTtl().toSeconds();
+  }
 
   @Transactional
   public LoginResult socialLogin(
@@ -79,13 +91,14 @@ public class AuthService {
     OAuthProfile profile = oauthClients.resolve(provider).fetch(providerAccessToken);
     Instant now = clock.instant();
 
+    java.util.Optional<User> existing =
+        userRepository.findByProviderAndProviderId(provider, profile.providerId());
+    boolean created = existing.isEmpty();
     User user =
-        userRepository
-            .findByProviderAndProviderId(provider, profile.providerId())
-            .orElseGet(
-                () ->
-                    userRepository.save(
-                        new User(provider, profile.providerId(), profile.email(), profile.name())));
+        existing.orElseGet(
+            () ->
+                userRepository.save(
+                    new User(provider, profile.providerId(), profile.email(), profile.name())));
     UserProfile userProfile =
         profileRepository
             .findById(user.id())
@@ -107,7 +120,8 @@ public class AuthService {
         user.id(),
         user.email(),
         user.name(),
-        userProfile.onboardingDone());
+        userProfile.onboardingDone(),
+        created);
   }
 
   // 도난 감지의 계보 폐기는 401 을 던져도 반드시 커밋되어야 한다 — 롤백되면 탈취자가 계속 쓴다
@@ -140,6 +154,18 @@ public class AuthService {
 
     stored.markRotated(now);
     return issue(stored.userId(), stored.deviceId(), stored.familyId(), now);
+  }
+
+  /**
+   * 리프레시 토큰으로 로그아웃 — FE 는 본문에 refreshToken 만 싣는다. 토큰이 가리키는 기기의 세션을 끊는다. 모르는 토큰·남의 토큰이면 아무 일도 하지 않고
+   * 성공한다(멱등, #12).
+   */
+  @Transactional
+  public void logoutByRefreshToken(Long userId, String refreshToken) {
+    refreshTokenRepository
+        .findByTokenHash(tokenGenerator.hash(refreshToken))
+        .filter(stored -> stored.userId().equals(userId))
+        .ifPresent(stored -> logout(userId, stored.deviceId()));
   }
 
   @Transactional

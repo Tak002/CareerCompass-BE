@@ -88,7 +88,7 @@ public class BoardController {
           board.name(),
           board.type(),
           board.cycleHours(),
-          board.status(),
+          wireStatus(board),
           board.isActive(),
           board.failCount(),
           board.lastCollectedAt());
@@ -113,9 +113,23 @@ public class BoardController {
       summary = "내 게시판 목록",
       description = "status(active|error)·failCount 포함 — 「수집 오류」와 「일시중지」 구분용.")
   @GetMapping
-  public ApiResponse<List<BoardResponse>> list(@CurrentUserId Long userId) {
+  public ApiResponse<ListResponse> list(@CurrentUserId Long userId) {
     return ApiResponse.success(
-        boardService.list(userId).stream().map(BoardResponse::from).toList());
+        new ListResponse(boardService.list(userId).stream().map(BoardResponse::from).toList()));
+  }
+
+  /** FE 는 목록을 {boards: [...]} 로 읽는다. */
+  public record ListResponse(List<BoardResponse> boards) {}
+
+  /**
+   * 응답 status 는 FE 어휘(active|paused|failed)로 낸다 — 수집 오류(시스템 status=error)는 failed, 사용자가 끈 것은
+   * paused. 오류가 우선이다(3연속 실패로 꺼진 게시판은 failed).
+   */
+  static String wireStatus(Board board) {
+    if ("error".equals(board.status())) {
+      return "failed";
+    }
+    return board.isActive() ? "active" : "paused";
   }
 
   public record PatchRequest(String name, String type, Integer cycleHours, Boolean isActive) {}

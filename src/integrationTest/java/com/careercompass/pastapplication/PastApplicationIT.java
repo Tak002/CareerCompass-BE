@@ -134,7 +134,9 @@ class PastApplicationIT extends ApiITBase {
     upload("/past-applications/upload", "워드.docx", docx, "워드", session.accessToken());
 
     JsonNode list =
-        json(call(HttpMethod.GET, "/past-applications", null, session.accessToken())).path("data");
+        json(call(HttpMethod.GET, "/past-applications", null, session.accessToken()))
+            .path("data")
+            .path("applications");
     assertThat(list).hasSize(2);
     assertThat(list.get(0).path("fileName").asText()).isEqualTo("워드.docx");
     assertThat(list.get(0).path("format").asText()).isEqualTo("docx");
@@ -250,10 +252,15 @@ class PastApplicationIT extends ApiITBase {
         call(
             HttpMethod.PATCH,
             "/past-applications/" + appId + "/items/" + itemId,
-            Map.of("category", "background"),
+            Map.of("category", "growth"),
             session.accessToken());
 
-    assertThat(json(patched).path("data").path("category").asText()).isEqualTo("background");
+    // 바깥 어휘는 growth, 저장은 background (v0.3 — FE 어휘에 맞춤)
+    assertThat(json(patched).path("data").path("category").asText()).isEqualTo("growth");
+    assertThat(
+            jdbc.queryForObject(
+                "select category from past_application_item where id = ?", String.class, itemId))
+        .isEqualTo("background");
     assertThat(json(patched).path("data").path("confident").asBoolean()).isTrue();
 
     ResponseEntity<String> badCategory =

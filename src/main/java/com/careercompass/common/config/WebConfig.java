@@ -30,8 +30,13 @@ public class WebConfig implements WebMvcConfigurer {
     for (HttpMessageConverter<?> converter : converters) {
       if (converter instanceof MappingJackson2HttpMessageConverter jackson) {
         jackson.setDefaultCharset(StandardCharsets.UTF_8);
+        // application/*+json 은 actuator(application/vnd.spring-boot.actuator.v3+json)용 — 빠지면 Accept
+        // 없는
+        // 헬스체크(curl·로드밸런서)가 500 이 된다. API 응답은 더 구체적인 application/json 이 고른다.
         jackson.setSupportedMediaTypes(
-            List.of(new MediaType("application", "json", StandardCharsets.UTF_8)));
+            List.of(
+                new MediaType("application", "json", StandardCharsets.UTF_8),
+                new MediaType("application", "*+json", StandardCharsets.UTF_8)));
       }
     }
   }

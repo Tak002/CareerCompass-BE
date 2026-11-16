@@ -31,7 +31,13 @@ public class AuthController {
 
   public record UserSummary(Long id, String email, String name, boolean onboardingDone) {}
 
-  public record LoginResponse(String accessToken, String refreshToken, UserSummary user) {}
+  /** isNewUser·expiresIn 은 FE 필수 필드다. user 는 FE 가 쓰지 않지만 하위 호환으로 남긴다. */
+  public record LoginResponse(
+      String accessToken,
+      String refreshToken,
+      boolean isNewUser,
+      long expiresIn,
+      UserSummary user) {}
 
   @Operation(summary = "소셜 로그인", description = "provider 는 kakao | google. 최초 로그인 시 사용자 생성.")
   @PostMapping("/social/{provider}")
@@ -45,13 +51,15 @@ public class AuthController {
         new LoginResponse(
             result.accessToken(),
             result.refreshToken(),
+            result.isNewUser(),
+            authService.accessTokenTtlSeconds(),
             new UserSummary(
                 result.userId(), result.email(), result.name(), result.onboardingDone())));
   }
 
   public record RefreshRequest(@NotBlank String refreshToken) {}
 
-  public record RefreshResponse(String accessToken, String refreshToken) {}
+  public record RefreshResponse(String accessToken, String refreshToken, long expiresIn) {}
 
   @Operation(
       summary = "토큰 재발급",
@@ -59,16 +67,29 @@ public class AuthController {
   @PostMapping("/refresh")
   public ApiResponse<RefreshResponse> refresh(@Valid @RequestBody RefreshRequest request) {
     AuthService.TokenPair pair = authService.refresh(request.refreshToken());
-    return ApiResponse.success(new RefreshResponse(pair.accessToken(), pair.refreshToken()));
+    return ApiResponse.success(
+        new RefreshResponse(
+            pair.accessToken(), pair.refreshToken(), authService.accessTokenTtlSeconds()));
   }
 
-  public record LogoutRequest(@NotBlank String deviceId) {}
+  /** FE 는 refreshToken 을 싣는다. deviceId 도 받는다(v0.2). 둘 다 없으면 400. */
+  public record LogoutRequest(String deviceId, String refreshToken) {}
 
-  @Operation(summary = "로그아웃", description = "이 기기의 리프레시 무효화 + FCM 해제 + 지문 등록 폐기. 멱등.")
+  @Operation(
+      summary = "로그아웃",
+      description = "이 기기의 리프레시 무효화 + FCM 해제 + 지문 등록 폐기. 본문은 {refreshToken} 또는 {deviceId}. 멱등.")
   @PostMapping("/logout")
-  public ApiResponse<Void> logout(
-      @CurrentUserId Long userId, @Valid @RequestBody LogoutRequest request) {
-    authService.logout(userId, request.deviceId());
+  public ApiResponse<Void> logout(@CurrentUserId Long userId, @RequestBody LogoutRequest request) {
+    if (request.refreshToken() != null && !request.refreshToken().isBlank()) {
+      authService.logoutByRefreshToken(userId, request.refreshToken());
+    } else if (request.deviceId() != null && !request.deviceId().isBlank()) {
+      authService.logout(userId, request.deviceId());
+    } else {
+      throw new com.careercompass.common.exception.BusinessException(
+          com.careercompass.common.api.ErrorCode.INVALID_INPUT,
+          "refreshToken 또는 deviceId 가 필요합니다",
+          "refreshToken");
+    }
     return ApiResponse.success(null);
   }
 

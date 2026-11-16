@@ -85,9 +85,15 @@ public class PostingController {
       @RequestParam(required = false, defaultValue = "false") boolean bookmarkedOnly,
       @RequestParam(required = false) String q,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+          LocalDate dueFrom,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+          LocalDate dueTo,
+      // v0.2 이름 — dueFrom·dueTo 의 별칭으로 남긴다 (#56)
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
           LocalDate dueAfter,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
           LocalDate dueBefore,
+      @RequestParam(required = false) Boolean includeNoDueDate,
       @RequestParam(required = false, defaultValue = "false") boolean includeExpired,
       @RequestParam(required = false, defaultValue = "collected_desc") String sort,
       @RequestParam(required = false) String cursor,
@@ -102,8 +108,9 @@ public class PostingController {
                 unreadOnly,
                 bookmarkedOnly,
                 q,
-                dueAfter,
-                dueBefore,
+                dueFrom != null ? dueFrom : dueAfter,
+                dueTo != null ? dueTo : dueBefore,
+                includeNoDueDate,
                 includeExpired),
             sort,
             cursor,
@@ -152,24 +159,36 @@ public class PostingController {
       List<String> preferences,
       List<Map<String, Object>> formQuestions) {}
 
-  public record SimilarResponse(Long id, String title, Integer score, LocalDate dueDate) {}
-
+  /** similar 는 목록 카드와 같은 모양이다 — FE 가 목록 항목 스키마로 읽는다. */
   public record DetailResponse(
       Long id,
       String title,
-      String rawContent,
+      String rawContent, // 없으면 "" — FE 는 null 을 받지 않는다
       String url,
       String type,
+      BoardRef board,
       LocalDate dueDate,
       Instant collectedAt,
       String parseStatus,
+      Integer score,
+      String scoreLabel,
       ParsedResponse parsed,
       SuitabilityResponse suitability,
       String scoreUnavailableReason,
       boolean isRead,
       boolean isBookmarked,
       boolean canGenerateApplication,
-      List<SimilarResponse> similar) {}
+      List<CardResponse> similar) {}
+
+  /** qualifications 는 늘 {year, gpa, major} 키를 갖는 객체 — 값은 문자열 또는 null (FE: gpa 는 문자열). */
+  private static Map<String, Object> qualificationsOf(Map<String, Object> raw) {
+    Map<String, Object> out = new java.util.LinkedHashMap<>();
+    for (String key : List.of("year", "gpa", "major")) {
+      Object value = raw == null ? null : raw.get(key);
+      out.put(key, value == null ? null : value.toString());
+    }
+    return out;
+  }
 
   @Operation(
       summary = "공고 상세",
@@ -182,29 +201,33 @@ public class PostingController {
         detail.parsed() == null
             ? null
             : new ParsedResponse(
-                detail.parsed().keywords(),
-                detail.parsed().qualifications(),
-                detail.parsed().preferences(),
-                detail.parsed().formQuestions());
+                detail.parsed().keywords() == null ? List.of() : detail.parsed().keywords(),
+                qualificationsOf(detail.parsed().qualifications()),
+                detail.parsed().preferences() == null ? List.of() : detail.parsed().preferences(),
+                detail.parsed().formQuestions() == null
+                    ? List.of()
+                    : detail.parsed().formQuestions());
+    SuitabilityResponse suitability = SuitabilityResponse.from(detail.suitability());
     return ApiResponse.success(
         new DetailResponse(
             detail.posting().id(),
             detail.posting().title(),
-            detail.posting().rawContent(),
+            detail.posting().rawContent() == null ? "" : detail.posting().rawContent(),
             detail.posting().url(),
             detail.posting().type(),
+            new BoardRef(detail.posting().boardId(), detail.boardName()),
             detail.posting().dueDate(),
             detail.posting().collectedAt(),
             detail.parseStatus(),
+            suitability == null ? null : suitability.score(),
+            suitability == null ? null : suitability.label(),
             parsed,
-            SuitabilityResponse.from(detail.suitability()),
+            suitability,
             detail.scoreUnavailableReason(),
             detail.isRead(),
             detail.isBookmarked(),
             detail.canGenerateApplication(),
-            detail.similar().stream()
-                .map(s -> new SimilarResponse(s.id(), s.title(), s.score(), s.dueDate()))
-                .toList()));
+            detail.similar().stream().map(CardResponse::from).toList()));
   }
 
   @Operation(summary = "읽음 처리", description = "멱등.")

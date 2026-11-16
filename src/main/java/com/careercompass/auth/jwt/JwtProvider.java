@@ -38,6 +38,8 @@ public class JwtProvider {
   public String createAccessToken(Long userId, Duration ttl) {
     Instant now = clock.instant();
     return Jwts.builder()
+        // jti — 같은 초에 다시 발급해도 토큰 문자열이 달라야 한다(FE 는 갱신 결과가 이전 토큰과 같으면 세션을 지운다)
+        .id(java.util.UUID.randomUUID().toString())
         .subject(String.valueOf(userId))
         .issuedAt(Date.from(now))
         .expiration(Date.from(now.plus(ttl)))

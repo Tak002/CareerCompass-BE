@@ -59,6 +59,7 @@ public class PageFetcher {
     this.urlGuard = urlGuard;
     this.httpClient =
         HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1) // 평문 http 에 h2c 업그레이드를 붙이지 않는다(구형 서버 호환)
             .followRedirects(HttpClient.Redirect.NEVER)
             .connectTimeout(properties.connectTimeout())
             .build();

@@ -40,8 +40,20 @@ public class PastApplicationController {
   public record ItemResponse(Long id, String category, String content, boolean confident) {
 
     static ItemResponse from(PastApplicationItem item) {
-      return new ItemResponse(item.id(), item.category(), item.content(), item.confident());
+      return new ItemResponse(item.id(), toWire(item.category()), item.content(), item.confident());
     }
+  }
+
+  /**
+   * 「성장 배경」의 바깥 이름은 FE 어휘 {@code growth} 다(v0.3). DB·분류기는 {@code background} 를 그대로 쓰고 경계에서만 바꾼다.
+   * 요청은 둘 다 받는다.
+   */
+  static String toWire(String category) {
+    return "background".equals(category) ? "growth" : category;
+  }
+
+  static String fromWire(String category) {
+    return "growth".equals(category) ? "background" : category;
   }
 
   /** fileName·format 은 #60 — 목록이 형식 배지를 그릴 수 있게 한다. format 은 pdf|docx|txt. */
@@ -95,10 +107,14 @@ public class PastApplicationController {
         AppResponse.from(service.upload(userId, file.getOriginalFilename(), label, content)));
   }
 
+  /** FE 는 목록을 {applications: [...]} 로 읽는다. */
+  public record ListResponse(List<AppResponse> applications) {}
+
   @Operation(summary = "내 과거 지원서 목록")
   @GetMapping
-  public ApiResponse<List<AppResponse>> list(@CurrentUserId Long userId) {
-    return ApiResponse.success(service.list(userId).stream().map(AppResponse::from).toList());
+  public ApiResponse<ListResponse> list(@CurrentUserId Long userId) {
+    return ApiResponse.success(
+        new ListResponse(service.list(userId).stream().map(AppResponse::from).toList()));
   }
 
   public record RecategorizeRequest(@NotBlank String category) {}
@@ -111,7 +127,8 @@ public class PastApplicationController {
       @PathVariable Long itemId,
       @Valid @RequestBody RecategorizeRequest request) {
     return ApiResponse.success(
-        ItemResponse.from(service.recategorize(userId, appId, itemId, request.category())));
+        ItemResponse.from(
+            service.recategorize(userId, appId, itemId, fromWire(request.category()))));
   }
 
   @Operation(summary = "과거 지원서 삭제", description = "저장소 파일도 함께 삭제된다.")

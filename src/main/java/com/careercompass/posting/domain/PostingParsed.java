@@ -88,4 +88,10 @@ public class PostingParsed {
     this.parseStatus = "failed";
     this.parsedAt = Instant.now();
   }
+
+  /** 공고가 아닌 글(AI reasonCode=NOT_A_POSTING) — 목록·유사 공고·적합도 대상에서 빠진다 (#65). */
+  public void parseExcluded() {
+    this.parseStatus = "excluded";
+    this.parsedAt = Instant.now();
+  }
 }

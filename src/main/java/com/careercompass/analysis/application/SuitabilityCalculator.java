@@ -29,7 +29,35 @@ public class SuitabilityCalculator {
       List<String> interestTexts, // 직무 라벨 + 태그
       String department,
       BigDecimal gpa,
-      List<String> experienceTexts) {} // 카드 제목 + data 값 결합 텍스트
+      List<String> experienceTexts, // 카드 제목 + data 값 결합 텍스트
+      Integer fieldScore) { // AI 분야 유사도(임베딩) 0~100. null 이면 글자 비교로 낸다 (AI 계약 §5)
+
+    /** AI 분야 유사도 없이 — 글자 비교만 쓰는 입력. */
+    public Input(
+        List<String> keywords,
+        String qualificationYear,
+        String qualificationGpa,
+        String qualificationMajor,
+        List<String> preferences,
+        String rawContent,
+        List<String> interestTexts,
+        String department,
+        BigDecimal gpa,
+        List<String> experienceTexts) {
+      this(
+          keywords,
+          qualificationYear,
+          qualificationGpa,
+          qualificationMajor,
+          preferences,
+          rawContent,
+          interestTexts,
+          department,
+          gpa,
+          experienceTexts,
+          null);
+    }
+  }
 
   public record AxisScore(String axis, int score, int weight) {}
 
@@ -50,8 +78,10 @@ public class SuitabilityCalculator {
   }
 
   public Result calculate(Input input) {
-    List<String> matchedKeywords = new ArrayList<>();
-    int field = fieldSimilarity(input, matchedKeywords);
+    List<String> matchedKeywords = new ArrayList<>(); // 코멘트 근거는 AI 점수가 있어도 글자 비교로 만든다
+    int keywordField = fieldSimilarity(input, matchedKeywords);
+    int field =
+        input.fieldScore() == null ? keywordField : Math.max(0, Math.min(100, input.fieldScore()));
     List<String> missing = new ArrayList<>();
     int qualification = qualification(input, missing);
     List<String> matchedPreferences = new ArrayList<>();

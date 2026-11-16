@@ -85,6 +85,84 @@ class PostingIT extends ApiITBase {
     assertThat(withExpired.path("postings")).hasSize(3);
   }
 
+  private List<Long> ids(Session session, String query) {
+    List<Long> ids = new ArrayList<>();
+    list(session, query).path("postings").forEach(p -> ids.add(p.path("id").asLong()));
+    return ids;
+  }
+
+  @Test
+  @DisplayName("마감일 프리셋 다섯 — 범위가 오면 숨김을 얹지 않고, 마감일 없는 공고는 includeNoDueDate 로 가른다 (#56)")
+  void duePresets() {
+    Session session = login();
+    long boardId =
+        TestFixtures.board(jdbc, session.userId(), "https://b.local/" + UUID.randomUUID());
+    LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Seoul"));
+    long in3 = posting(boardId, "3일 뒤 마감", "recruit", today.plusDays(3), 10);
+    long in20 = posting(boardId, "20일 뒤 마감", "recruit", today.plusDays(20), 20);
+    long past = posting(boardId, "지난달 마감", "recruit", today.minusDays(30), 30);
+    long noDue = posting(boardId, "상시 모집", "recruit", null, 40);
+
+    // 전체: dueFrom=오늘 + includeNoDueDate=true
+    assertThat(ids(session, "?dueFrom=" + today + "&includeNoDueDate=true"))
+        .containsExactlyInAnyOrder(in3, in20, noDue);
+    // 7일 이내
+    assertThat(
+            ids(
+                session,
+                "?dueFrom=" + today + "&dueTo=" + today.plusDays(7) + "&includeNoDueDate=false"))
+        .containsExactly(in3);
+    // 30일 이내
+    assertThat(
+            ids(
+                session,
+                "?dueFrom=" + today + "&dueTo=" + today.plusDays(30) + "&includeNoDueDate=false"))
+        .containsExactlyInAnyOrder(in3, in20);
+    // 마감 지난 공고 포함
+    assertThat(ids(session, "?includeExpired=true&includeNoDueDate=true"))
+        .containsExactlyInAnyOrder(in3, in20, past, noDue);
+    // 직접 지정 — 한쪽 끝만(상한만): 지난 범위도 숨김 없이 나온다
+    assertThat(ids(session, "?dueTo=" + today.minusDays(1) + "&includeNoDueDate=false"))
+        .containsExactly(past);
+    // 기본(파라미터 없음) — 지난 마감은 숨고 마감일 없는 공고는 나온다
+    assertThat(ids(session, "")).containsExactlyInAnyOrder(in3, in20, noDue);
+  }
+
+  @Test
+  @DisplayName("검색어 q — 제목과 parsed.keywords 부분 일치, 원문은 뒤지지 않는다 (#56)")
+  void searchTitleAndKeywords() {
+    Session session = login();
+    long boardId =
+        TestFixtures.board(jdbc, session.userId(), "https://b.local/" + UUID.randomUUID());
+    long byTitle = posting(boardId, "빅데이터 분석가 채용", "recruit", null, 10);
+    long byKeyword = posting(boardId, "2026 신입 공채", "recruit", null, 20);
+    long rawOnly = posting(boardId, "장학생 선발", "scholarship", null, 30);
+    parsed(byKeyword, "done", "[\"데이터 엔지니어\",\"Spark\",\"SQL\"]");
+    jdbc.update("update posting set raw_content = '데이터 관련 전공 우대' where id = ?", rawOnly);
+
+    assertThat(ids(session, "?q=데이터")).containsExactlyInAnyOrder(byTitle, byKeyword);
+    assertThat(ids(session, "?q=spark")).containsExactly(byKeyword); // 대소문자 무시
+    assertThat(ids(session, "?q=100%25")).isEmpty(); // LIKE 와일드카드는 글자 그대로
+  }
+
+  @Test
+  @DisplayName("공고가 아닌 글(parseStatus=excluded)은 목록에 뜨지 않는다 (#65)")
+  void excludedPostingsHidden() {
+    Session session = login();
+    long boardId =
+        TestFixtures.board(jdbc, session.userId(), "https://b.local/" + UUID.randomUUID());
+    long real = posting(boardId, "2026 백엔드 인턴 채용", "recruit", null, 10);
+    long notice = posting(boardId, "2026-2 수강신청 안내", "other", null, 5);
+    parsed(real, "done", "[\"백엔드\",\"Spring\",\"AWS\"]");
+    parsed(notice, "excluded", null);
+
+    List<Long> ids = new ArrayList<>();
+    list(session, "?includeExpired=true")
+        .path("postings")
+        .forEach(p -> ids.add(p.path("id").asLong()));
+    assertThat(ids).containsExactly(real);
+  }
+
   private Long[] expiredHidden(long fresh, long noDue, long expired) {
     // collected_at: expired(5초 전) < fresh(10초 전) < noDue(20초 전) — expired 는 숨겨진다
     return new Long[] {fresh, noDue};

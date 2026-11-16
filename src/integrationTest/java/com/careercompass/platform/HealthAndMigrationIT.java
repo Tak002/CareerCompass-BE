@@ -26,6 +26,30 @@ class HealthAndMigrationIT extends IntegrationTestBase {
     assertThat(res.getBody()).contains("UP");
   }
 
+  @org.springframework.boot.test.web.server.LocalServerPort private int port;
+
+  private java.net.http.HttpResponse<String> raw(String path) throws Exception {
+    // Accept 헤더 없이 — curl·로드밸런서 헬스체크와 같은 요청
+    return java.net.http.HttpClient.newHttpClient()
+        .send(
+            java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create("http://127.0.0.1:" + port + path))
+                .GET()
+                .build(),
+            java.net.http.HttpResponse.BodyHandlers.ofString());
+  }
+
+  @Test
+  @DisplayName("모든 경로는 /api/v1 아래 — Accept 없는 헬스체크도 200, 접두사 없는 경로는 없다")
+  void apiPrefixAndPlainHealthCheck() throws Exception {
+    var health = raw("/api/v1/actuator/health");
+    assertThat(health.statusCode()).isEqualTo(200);
+    assertThat(health.body()).contains("UP");
+
+    assertThat(raw("/api/v1/users/me").statusCode()).isEqualTo(401);
+    assertThat(raw("/users/me").statusCode()).isEqualTo(404);
+  }
+
   @Test
   @DisplayName("빈 PostgreSQL 에 Flyway 마이그레이션이 적용되어 전체 스키마가 선다")
   void migrationAppliesFromScratch() {

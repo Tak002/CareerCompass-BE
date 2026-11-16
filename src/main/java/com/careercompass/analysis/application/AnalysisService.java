@@ -107,7 +107,11 @@ public class AnalysisService {
       posting.applyParsed(result.type(), result.dueDate());
       return true;
     } catch (LlmGateway.ParsingFailedException e) {
-      parsed.parseFailed();
+      if (e.notAPosting()) {
+        parsed.parseExcluded(); // 학사공지 등 — 목록·적합도 대상에서 뺀다 (#65)
+      } else {
+        parsed.parseFailed();
+      }
       return false;
     } catch (BusinessException e) {
       if (e.code() == ErrorCode.LLM_UNAVAILABLE) {
@@ -143,10 +147,18 @@ public class AnalysisService {
 
     Map<String, Object> qualifications =
         parsed.qualifications() == null ? Map.of() : parsed.qualifications();
+    List<String> keywords = parsed.keywords() == null ? List.of() : parsed.keywords();
+    // 분야 축만 AI 임베딩 점수로 (AI 계약 §5). 실패·미연결이면 null → 계산기가 글자 비교로 낸다
+    Integer fieldScore =
+        llmGateway
+            .fieldScores(
+                interestTexts,
+                List.of(new LlmGateway.FieldPosting(postingId, posting.title(), keywords)))
+            .get(postingId);
     SuitabilityCalculator.Result result =
         calculator.calculate(
             new SuitabilityCalculator.Input(
-                parsed.keywords() == null ? List.of() : parsed.keywords(),
+                keywords,
                 asText(qualifications.get("year")),
                 asText(qualifications.get("gpa")),
                 asText(qualifications.get("major")),
@@ -155,7 +167,8 @@ public class AnalysisService {
                 interestTexts,
                 profile == null ? null : profile.department(),
                 profile == null ? null : profile.gpa(),
-                cards.stream().map(this::cardText).toList()));
+                cards.stream().map(this::cardText).toList(),
+                fieldScore));
 
     List<Map<String, Object>> breakdown =
         result.breakdown().stream()

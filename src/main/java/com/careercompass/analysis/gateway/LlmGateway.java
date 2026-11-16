@@ -14,8 +14,27 @@ import java.util.List;
 public interface LlmGateway {
 
   class ParsingFailedException extends RuntimeException {
+
+    /** AI 계약 §1.3 — 공고가 아닌 글(학사공지 등). 「분석 실패」가 아니라 목록에서 뺀다 (#65). */
+    public static final String NOT_A_POSTING = "NOT_A_POSTING";
+
+    private final String reasonCode; // NO_KEYWORDS | IMAGE_ONLY | EMPTY | NOT_A_POSTING | null
+
     public ParsingFailedException(String message) {
+      this(message, null);
+    }
+
+    public ParsingFailedException(String message, String reasonCode) {
       super(message);
+      this.reasonCode = reasonCode;
+    }
+
+    public String reasonCode() {
+      return reasonCode;
+    }
+
+    public boolean notAPosting() {
+      return NOT_A_POSTING.equals(reasonCode);
     }
   }
 
@@ -42,6 +61,19 @@ public interface LlmGateway {
   record Comments(String strength, String weakness) {}
 
   Comments comments(CommentContext context);
+
+  /** 분야 유사도 대상 공고 — AI 계약 §5 의 postings[] 한 건. */
+  record FieldPosting(Long id, String title, List<String> keywords) {}
+
+  /**
+   * 분야 유사도 점수 (AI 계약 §5 POST /v1/field-similarity) — 공고 id → 0~100. 적합도 4축 중 field_similarity 하나만
+   * 대신한다. 비어 있거나 일부 id 가 빠진 결과는 「글자 비교로 대신하라」는 뜻이다. 이 메서드는 장애를 던지지 않는다(점수 산출을 막지 않는다). 휴리스틱 구현은 늘 빈
+   * 결과를 돌려준다.
+   */
+  default java.util.Map<Long, Integer> fieldScores(
+      List<String> interestTexts, List<FieldPosting> postings) {
+    return java.util.Map.of();
+  }
 
   /** 지원서 항목 초안 (M6 #36). experiences 는 매칭도 순으로 정렬되어 온다. */
   String draftAnswer(

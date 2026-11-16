@@ -40,6 +40,13 @@ public class PostingQueryService {
       Set.of("scholarship", "contest", "recruit", "activity", "other");
   private static final Set<String> APPLICATION_TYPES = Set.of("scholarship", "recruit");
 
+  /** 「오늘」을 서버가 판정하는 유일한 자리(범위 없는 마감 숨김)의 시간대 (#56). */
+  static final java.time.ZoneId SEOUL = java.time.ZoneId.of("Asia/Seoul");
+
+  /**
+   * 목록 필터 (#28 #56). dueFrom·dueTo 는 그날 포함, 한쪽만 와도 된다. includeNoDueDate 가 null 이면 true(마감일 없는 공고
+   * 포함).
+   */
   public record ListFilter(
       List<Long> boardIds,
       List<String> types,
@@ -47,8 +54,9 @@ public class PostingQueryService {
       boolean unreadOnly,
       boolean bookmarkedOnly,
       String q,
-      LocalDate dueAfter,
-      LocalDate dueBefore,
+      LocalDate dueFrom,
+      LocalDate dueTo,
+      Boolean includeNoDueDate,
       boolean includeExpired) {}
 
   public record PostingCard(
@@ -122,6 +130,7 @@ public class PostingQueryService {
             left join suitability_score s on s.posting_id = p.id and s.user_id = :userId
             left join posting_user_state st on st.posting_id = p.id and st.user_id = :userId
             where b.user_id = :userId
+              and coalesce(pp.parse_status, 'pending') <> 'excluded'
             """);
 
     if (filter.boardIds() != null && !filter.boardIds().isEmpty()) {
@@ -143,21 +152,14 @@ public class PostingQueryService {
       sql.append(" and coalesce(st.is_bookmarked, false) = true");
     }
     if (filter.q() != null && !filter.q().isBlank()) {
-      sql.append(" and p.title ilike :q");
-      params.put("q", "%" + filter.q().trim() + "%");
+      // #56: 제목과 parsed.keywords 의 부분 문자열(대소문자 무시). 원문(rawContent)은 뒤지지 않는다.
+      sql.append(
+          " and (p.title ilike :q escape '\\' or exists (select 1 from"
+              + " jsonb_array_elements_text(coalesce(pp.keywords, '[]'::jsonb)) k(kw)"
+              + " where k.kw ilike :q escape '\\'))");
+      params.put("q", "%" + escapeLike(filter.q().trim()) + "%");
     }
-    if (!filter.includeExpired()) {
-      sql.append(" and (p.due_date is null or p.due_date >= :today)");
-      params.put("today", LocalDate.now(clock));
-    }
-    if (filter.dueAfter() != null) {
-      sql.append(" and p.due_date >= :dueAfter");
-      params.put("dueAfter", filter.dueAfter());
-    }
-    if (filter.dueBefore() != null) {
-      sql.append(" and p.due_date <= :dueBefore");
-      params.put("dueBefore", filter.dueBefore());
-    }
+    appendDueConditions(sql, params, filter);
 
     Cursor decoded = cursor == null ? null : CursorCodec.decode(cursor, sort);
     switch (sort) {
@@ -194,49 +196,88 @@ public class PostingQueryService {
     params.put("limitPlusOne", limit + 1);
 
     List<PostingCard> fetched =
-        jdbc.query(
-            sql.toString(),
-            params,
-            (rs, rowNum) ->
-                new PostingCard(
-                    rs.getLong("id"),
-                    rs.getString("title"),
-                    rs.getString("type"),
-                    rs.getLong("board_id"),
-                    rs.getString("board_name"),
-                    rs.getObject("due_date", LocalDate.class),
-                    rs.getTimestamp("collected_at").toInstant(),
-                    rs.getString("parse_status"),
-                    rs.getObject("score") == null ? null : rs.getInt("score"),
-                    rs.getString("label"),
-                    null,
-                    rs.getBoolean("is_read"),
-                    rs.getBoolean("is_bookmarked")));
-
-    if (fetched.stream().anyMatch(card -> card.score() == null)) {
-      boolean profileIncomplete = profileIncomplete(userId);
-      fetched =
-          fetched.stream()
-              .map(
-                  card ->
-                      new PostingCard(
-                          card.id(),
-                          card.title(),
-                          card.type(),
-                          card.boardId(),
-                          card.boardName(),
-                          card.dueDate(),
-                          card.collectedAt(),
-                          card.parseStatus(),
-                          card.score(),
-                          card.scoreLabel(),
-                          unavailableReason(card.score(), card.parseStatus(), profileIncomplete),
-                          card.isRead(),
-                          card.isBookmarked()))
-              .toList();
-    }
-
+        withUnavailableReasons(userId, jdbc.query(sql.toString(), params, CARD_MAPPER));
     return CursorPage.of(fetched, limit, card -> cursorOf(sort, card));
+  }
+
+  private static final org.springframework.jdbc.core.RowMapper<PostingCard> CARD_MAPPER =
+      (rs, rowNum) ->
+          new PostingCard(
+              rs.getLong("id"),
+              rs.getString("title"),
+              rs.getString("type"),
+              rs.getLong("board_id"),
+              rs.getString("board_name"),
+              rs.getObject("due_date", LocalDate.class),
+              rs.getTimestamp("collected_at").toInstant(),
+              rs.getString("parse_status"),
+              rs.getObject("score") == null ? null : rs.getInt("score"),
+              rs.getString("label"),
+              null,
+              rs.getBoolean("is_read"),
+              rs.getBoolean("is_bookmarked"));
+
+  private List<PostingCard> withUnavailableReasons(Long userId, List<PostingCard> cards) {
+    if (cards.stream().noneMatch(card -> card.score() == null)) {
+      return cards;
+    }
+    boolean profileIncomplete = profileIncomplete(userId);
+    return cards.stream()
+        .map(
+            card ->
+                new PostingCard(
+                    card.id(),
+                    card.title(),
+                    card.type(),
+                    card.boardId(),
+                    card.boardName(),
+                    card.dueDate(),
+                    card.collectedAt(),
+                    card.parseStatus(),
+                    card.score(),
+                    card.scoreLabel(),
+                    unavailableReason(card.score(), card.parseStatus(), profileIncomplete),
+                    card.isRead(),
+                    card.isBookmarked()))
+        .toList();
+  }
+
+  /**
+   * 마감일 조건 (#56). 범위(dueFrom·dueTo)가 하나라도 오면 그 범위만 보고 「마감 지남 숨김」을 얹지 않는다. 범위가 없을 때만 오늘(KST) 이전 마감을
+   * 숨기고 includeExpired 로 끈다. 마감일 없는 공고는 includeNoDueDate(기본 true)로 따로 가른다 — 날짜 조건은 null 행을 조용히 뺀다.
+   */
+  private void appendDueConditions(
+      StringBuilder sql, Map<String, Object> params, ListFilter filter) {
+    boolean includeNoDue = filter.includeNoDueDate() == null || filter.includeNoDueDate();
+    boolean ranged = filter.dueFrom() != null || filter.dueTo() != null;
+    List<String> bounds = new java.util.ArrayList<>();
+    if (ranged) {
+      if (filter.dueFrom() != null) {
+        bounds.add("p.due_date >= :dueFrom");
+        params.put("dueFrom", filter.dueFrom());
+      }
+      if (filter.dueTo() != null) {
+        bounds.add("p.due_date <= :dueTo");
+        params.put("dueTo", filter.dueTo());
+      }
+    } else if (!filter.includeExpired()) {
+      bounds.add("p.due_date >= :today");
+      params.put("today", todayInSeoul());
+    }
+    String dated = bounds.isEmpty() ? "p.due_date is not null" : String.join(" and ", bounds);
+    if (includeNoDue) {
+      sql.append(" and (p.due_date is null or (").append(dated).append("))");
+    } else {
+      sql.append(" and p.due_date is not null and ").append(dated);
+    }
+  }
+
+  private LocalDate todayInSeoul() {
+    return LocalDate.now(clock.withZone(SEOUL));
+  }
+
+  private static String escapeLike(String value) {
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
   }
 
   /**
@@ -282,10 +323,9 @@ public class PostingQueryService {
 
   // ─── 상세 (#29) ───────────────────────────────────────────────
 
-  public record SimilarPosting(Long id, String title, Integer score, LocalDate dueDate) {}
-
   public record Detail(
       Posting posting,
+      String boardName,
       String parseStatus,
       PostingParsed parsed,
       SuitabilityScore suitability,
@@ -293,7 +333,7 @@ public class PostingQueryService {
       boolean isRead,
       boolean isBookmarked,
       boolean canGenerateApplication,
-      List<SimilarPosting> similar) {}
+      List<PostingCard> similar) {} // 목록 카드와 같은 모양 (FE 는 similar 를 목록 항목 스키마로 읽는다)
 
   @Transactional(readOnly = true)
   public Detail detail(Long userId, Long postingId) {
@@ -306,6 +346,7 @@ public class PostingQueryService {
 
     return new Detail(
         posting,
+        boardRepository.findById(posting.boardId()).map(b -> b.name()).orElse(""),
         parseStatus,
         parsed.filter(p -> "done".equals(p.parseStatus())).orElse(null),
         suitability,
@@ -321,43 +362,50 @@ public class PostingQueryService {
   }
 
   /** 유사 공고 3건 — 동일 유형 후보 20건에서 키워드 겹침 → 적합도 → 최신 순으로 고른다 (F3-3). */
-  private List<SimilarPosting> similar(Long userId, Posting posting, List<String> keywords) {
+  private List<PostingCard> similar(Long userId, Posting posting, List<String> keywords) {
     Map<String, Object> params = new HashMap<>();
     params.put("userId", userId);
     params.put("type", posting.type());
     params.put("selfId", posting.id());
-    params.put("today", LocalDate.now(clock));
-    record Candidate(Long id, String title, Integer score, LocalDate dueDate, List<String> kw) {}
+    params.put("today", todayInSeoul());
+    record Candidate(PostingCard card, List<String> kw) {}
     List<Candidate> candidates =
         jdbc.query(
             """
-            select p.id, p.title, p.due_date, s.score, pp.keywords
+            select p.id, p.title, p.type, p.due_date, p.collected_at, p.board_id,
+                   b.name as board_name, coalesce(pp.parse_status, 'pending') as parse_status,
+                   s.score, s.label,
+                   coalesce(st.is_read, false) as is_read,
+                   coalesce(st.is_bookmarked, false) as is_bookmarked,
+                   pp.keywords
             from posting p
             join board b on b.id = p.board_id
             left join suitability_score s on s.posting_id = p.id and s.user_id = :userId
             left join posting_parsed pp on pp.posting_id = p.id
+            left join posting_user_state st on st.posting_id = p.id and st.user_id = :userId
             where b.user_id = :userId and p.type = :type and p.id <> :selfId
               and (p.due_date is null or p.due_date >= :today)
+              and coalesce(pp.parse_status, 'pending') <> 'excluded'
             order by s.score desc nulls last, p.collected_at desc
             limit 20
             """,
             params,
             (rs, rowNum) ->
                 new Candidate(
-                    rs.getLong("id"),
-                    rs.getString("title"),
-                    rs.getObject("score") == null ? null : rs.getInt("score"),
-                    rs.getObject("due_date", LocalDate.class),
-                    parseJsonArray(rs.getString("keywords"))));
+                    CARD_MAPPER.mapRow(rs, rowNum), parseJsonArray(rs.getString("keywords"))));
 
     Set<String> baseKeywords = keywords == null ? Set.of() : new HashSet<>(keywords);
-    return candidates.stream()
-        .sorted(
-            Comparator.<Candidate>comparingLong(c -> -overlap(baseKeywords, c.kw()))
-                .thenComparing(c -> c.score() == null ? -1 : c.score(), Comparator.reverseOrder()))
-        .limit(3)
-        .map(c -> new SimilarPosting(c.id(), c.title(), c.score(), c.dueDate()))
-        .toList();
+    List<PostingCard> top =
+        candidates.stream()
+            .sorted(
+                Comparator.<Candidate>comparingLong(c -> -overlap(baseKeywords, c.kw()))
+                    .thenComparing(
+                        c -> c.card().score() == null ? -1 : c.card().score(),
+                        Comparator.reverseOrder()))
+            .limit(3)
+            .map(Candidate::card)
+            .toList();
+    return withUnavailableReasons(userId, top);
   }
 
   private long overlap(Set<String> base, List<String> other) {

@@ -16,9 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
-import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
@@ -28,8 +26,6 @@ import org.springframework.web.client.RestClientResponseException;
  *
  * <p>개인정보 경계(#48): 이 게이트웨이로 나가는 요청에는 공고 본문·경험 요약만 싣고, 이름·이메일 등 식별자는 싣지 않는다.
  */
-@Component
-@ConditionalOnProperty(name = "app.ai.base-url")
 public class HttpLlmGateway implements LlmGateway {
 
   private static final Logger log = LoggerFactory.getLogger(HttpLlmGateway.class);
@@ -52,7 +48,14 @@ public class HttpLlmGateway implements LlmGateway {
     this.objectMapper = objectMapper;
     this.privacyMasker = privacyMasker;
     this.meterRegistry = meterRegistry;
-    JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory();
+    // HTTP/1.1 고정 — JDK 클라이언트의 기본(HTTP/2)은 평문 http:// 에 「Upgrade: h2c」를 붙이고, AI 서버(uvicorn)는 그
+    // 업그레이드를 지원하지 않아 요청 본문을 잃는다(→ 400 → 모든 호출이 LLM_UNAVAILABLE). 2026-11-16 실연결에서 확인.
+    java.net.http.HttpClient httpClient =
+        java.net.http.HttpClient.newBuilder()
+            .version(java.net.http.HttpClient.Version.HTTP_1_1)
+            .connectTimeout(java.time.Duration.ofSeconds(3))
+            .build();
+    JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
     requestFactory.setReadTimeout(properties.timeout());
     this.restClient =
         RestClient.builder()
@@ -72,7 +75,8 @@ public class HttpLlmGateway implements LlmGateway {
     JsonNode node =
         callWithRetry("/v1/parse-posting", Map.of("title", title, "rawContent", rawContent));
     if (Boolean.TRUE.equals(node.path("parsingFailed").asBoolean(false))) {
-      throw new ParsingFailedException(node.path("reason").asText("파싱 실패"));
+      throw new ParsingFailedException(
+          node.path("reason").asText("파싱 실패"), textOrNull(node, "reasonCode"));
     }
     if (!node.path("keywords").isArray()) {
       throw new BusinessException(ErrorCode.LLM_UNAVAILABLE, "AI 응답 스키마가 올바르지 않습니다");
@@ -151,6 +155,61 @@ public class HttpLlmGateway implements LlmGateway {
       throw new BusinessException(ErrorCode.LLM_UNAVAILABLE, "AI 응답 스키마가 올바르지 않습니다");
     }
     return answer;
+  }
+
+  /** AI 계약 §5 — 한 요청에 공고 20건, 관심 텍스트 60개까지. */
+  static final int FIELD_BATCH = 20;
+
+  static final int FIELD_MAX_INTERESTS = 60;
+
+  @Override
+  public Map<Long, Integer> fieldScores(List<String> interestTexts, List<FieldPosting> postings) {
+    List<String> interests =
+        interestTexts == null
+            ? List.of()
+            : interestTexts.stream()
+                .filter(text -> text != null && !text.isBlank())
+                .limit(FIELD_MAX_INTERESTS)
+                .toList();
+    if (interests.isEmpty() || postings == null || postings.isEmpty()) {
+      return Map.of(); // AI 는 관심 분야가 비면 400 — 부르지 않는다
+    }
+    Map<Long, Integer> scores = new java.util.HashMap<>();
+    for (int from = 0; from < postings.size(); from += FIELD_BATCH) {
+      List<Map<String, Object>> batch =
+          postings.subList(from, Math.min(from + FIELD_BATCH, postings.size())).stream()
+              .map(
+                  p ->
+                      Map.<String, Object>of(
+                          "id", p.id(),
+                          "title", truncate(p.title() == null ? "" : p.title(), 500),
+                          "keywords",
+                              p.keywords() == null
+                                  ? List.of()
+                                  : p.keywords().stream().limit(50).toList()))
+              .toList();
+      try {
+        JsonNode node =
+            callWithRetry(
+                "/v1/field-similarity", Map.of("interestTexts", interests, "postings", batch));
+        node.path("scores")
+            .forEach(
+                s -> {
+                  if (s.path("score").isNumber() && s.has("id")) {
+                    scores.put(
+                        s.path("id").asLong(), Math.max(0, Math.min(100, s.path("score").asInt())));
+                  }
+                });
+      } catch (RuntimeException e) {
+        // 계약 §5: 끝내 실패하면 BE 의 글자 비교로 대신한다 — 점수 산출은 막지 않는다
+        log.warn("분야 유사도 호출 실패 — 글자 비교로 대신한다 ({}건): {}", batch.size(), e.toString());
+      }
+    }
+    return scores;
+  }
+
+  private static String truncate(String value, int max) {
+    return value.length() > max ? value.substring(0, max) : value;
   }
 
   private JsonNode callWithRetry(String path, Object body) {

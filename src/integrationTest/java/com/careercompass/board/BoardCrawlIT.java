@@ -201,7 +201,9 @@ class BoardCrawlIT extends ApiITBase {
     }
 
     JsonNode listed =
-        json(call(HttpMethod.GET, "/boards", null, session.accessToken())).path("data");
+        json(call(HttpMethod.GET, "/boards", null, session.accessToken()))
+            .path("data")
+            .path("boards");
     JsonNode target = null;
     for (JsonNode b : listed) {
       if (b.path("id").asLong() == boardId) {
@@ -209,7 +211,8 @@ class BoardCrawlIT extends ApiITBase {
       }
     }
     assertThat(target).isNotNull();
-    assertThat(target.path("status").asText()).isEqualTo("error");
+    // 바깥 어휘는 FE 의 active|paused|failed — 수집 오류는 failed (v0.3)
+    assertThat(target.path("status").asText()).isEqualTo("failed");
     assertThat(target.path("failCount").asInt()).isEqualTo(3);
     assertThat(events.stream(CrawlEvents.BoardDisabled.class).count()).isGreaterThanOrEqualTo(1);
 

@@ -48,7 +48,10 @@ class ContractSmokeIT extends ApiITBase {
             null);
     assertOk(login, 201);
     JsonNode data = json(login).path("data");
-    assertHas(data, "accessToken", "refreshToken", "user");
+    // FE 필수: accessToken·refreshToken·isNewUser·expiresIn(초, > 0). user 는 하위 호환
+    assertHas(data, "accessToken", "refreshToken", "isNewUser", "expiresIn", "user");
+    assertThat(data.path("isNewUser").asBoolean()).isTrue();
+    assertThat(data.path("expiresIn").asLong()).isPositive();
     assertHas(data.path("user"), "id", "email", "name", "onboardingDone");
 
     ResponseEntity<String> refresh =
@@ -58,13 +61,33 @@ class ContractSmokeIT extends ApiITBase {
             Map.of("refreshToken", data.path("refreshToken").asText()),
             null);
     assertOk(refresh, 200);
-    assertHas(json(refresh).path("data"), "accessToken", "refreshToken");
+    JsonNode refreshed = json(refresh).path("data");
+    assertHas(refreshed, "accessToken", "refreshToken", "expiresIn");
+    // 같은 초에 재발급해도 새 access 는 이전과 달라야 한다 — FE 는 같으면 세션을 지운다
+    assertThat(refreshed.path("accessToken").asText())
+        .isNotEqualTo(data.path("accessToken").asText());
 
-    String access = json(refresh).path("data").path("accessToken").asText();
+    String access = refreshed.path("accessToken").asText();
     assertOk(
         call(HttpMethod.POST, "/auth/biometric/register", Map.of("deviceId", "smoke-dev"), access),
         200);
-    assertOk(call(HttpMethod.POST, "/auth/logout", Map.of("deviceId", "smoke-dev"), access), 200);
+    // FE 의 로그아웃 본문은 {refreshToken}
+    assertOk(
+        call(
+            HttpMethod.POST,
+            "/auth/logout",
+            Map.of("refreshToken", refreshed.path("refreshToken").asText()),
+            access),
+        200);
+    assertThat(
+            call(
+                    HttpMethod.POST,
+                    "/auth/refresh",
+                    Map.of("refreshToken", refreshed.path("refreshToken").asText()),
+                    null)
+                .getStatusCode()
+                .value())
+        .isEqualTo(401);
   }
 
   @Test
@@ -157,12 +180,16 @@ class ContractSmokeIT extends ApiITBase {
             s.accessToken());
     assertOk(uploaded, 201);
     JsonNode uploadData = json(uploaded).path("data");
-    assertHas(uploadData, "id", "label", "filePath", "extractStatus", "items");
+    assertHas(
+        uploadData, "id", "label", "fileName", "format", "filePath", "extractStatus", "items");
     assertHas(uploadData.path("items").get(0), "id", "category", "content", "confident");
     long appId = uploadData.path("id").asLong();
     long itemId = uploadData.path("items").get(0).path("id").asLong();
 
-    assertOk(call(HttpMethod.GET, "/past-applications", null, s.accessToken()), 200);
+    ResponseEntity<String> pastList =
+        call(HttpMethod.GET, "/past-applications", null, s.accessToken());
+    assertOk(pastList, 200);
+    assertHas(json(pastList).path("data"), "applications"); // FE: {applications: [...]}
     assertOk(
         call(
             HttpMethod.PATCH,
@@ -209,8 +236,9 @@ class ContractSmokeIT extends ApiITBase {
 
     ResponseEntity<String> boards = call(HttpMethod.GET, "/boards", null, s.accessToken());
     assertOk(boards, 200);
+    assertHas(json(boards).path("data"), "boards"); // FE: {boards: [...]}
     assertHas(
-        json(boards).path("data").get(0),
+        json(boards).path("data").path("boards").get(0),
         "id",
         "url",
         "name",
@@ -244,20 +272,61 @@ class ContractSmokeIT extends ApiITBase {
         "isBookmarked");
     assertHas(cards.path("postings").get(0).path("board"), "id", "name");
 
+    // 같은 유형 공고를 하나 더 — similar 원소 모양을 보기 위해
+    long sibling =
+        jdbc.queryForObject(
+            "insert into posting (board_id, title, url, url_hash, type)"
+                + " values (?, '스모크 채용 2', ?, ?, 'recruit') returning id",
+            Long.class,
+            boardId,
+            "https://smoke.local/p/" + UUID.randomUUID(),
+            UUID.randomUUID().toString());
+    jdbc.update(
+        "insert into posting_parsed (posting_id, parse_status, keywords) values (?, 'done',"
+            + " '[\"백엔드\"]'::jsonb)",
+        sibling);
+
     ResponseEntity<String> detail =
         call(HttpMethod.GET, "/postings/" + postingId, null, s.accessToken());
     assertOk(detail, 200);
+    JsonNode detailData = json(detail).path("data");
+    // FE 필수: 목록 필드(type·board·dueDate·collectedAt·isRead·isBookmarked) + rawContent·url·similar
     assertHas(
-        json(detail).path("data"),
+        detailData,
         "id",
         "title",
+        "type",
+        "board",
+        "dueDate",
+        "collectedAt",
+        "score",
+        "scoreLabel",
         "rawContent",
         "url",
         "parsed",
         "suitability",
         "scoreUnavailableReason",
+        "isRead",
+        "isBookmarked",
         "canGenerateApplication",
         "similar");
+    assertHas(detailData.path("board"), "id", "name");
+    assertHas(
+        detailData.path("parsed"), "keywords", "qualifications", "preferences", "formQuestions");
+    assertHas(detailData.path("parsed").path("qualifications"), "year", "gpa");
+    assertThat(detailData.path("similar")).hasSize(1);
+    assertHas(
+        detailData.path("similar").get(0),
+        "id",
+        "title",
+        "type",
+        "board",
+        "dueDate",
+        "collectedAt",
+        "score",
+        "scoreLabel",
+        "isRead",
+        "isBookmarked");
     assertHas(
         json(detail).path("data").path("suitability"),
         "score",
@@ -316,6 +385,7 @@ class ContractSmokeIT extends ApiITBase {
     }
     assertHas(
         ready.path("items").get(0), "id", "order", "question", "maxChars", "status", "answer");
+    assertThat(ready.path("items").get(0).path("maxChars").asInt()).isPositive(); // FE: 필수 양수
     long itemId = ready.path("items").get(0).path("id").asLong();
     String base = "/applications/" + applicationId;
 
@@ -335,7 +405,9 @@ class ContractSmokeIT extends ApiITBase {
     ResponseEntity<String> list = call(HttpMethod.GET, "/applications", null, s.accessToken());
     assertOk(list, 200);
     assertHas(
-        json(list).path("data").get(0),
+        json(list).path("data"), "applications", "nextCursor"); // FE: {applications, nextCursor}
+    assertHas(
+        json(list).path("data").path("applications").get(0),
         "id",
         "postingId",
         "postingTitle",

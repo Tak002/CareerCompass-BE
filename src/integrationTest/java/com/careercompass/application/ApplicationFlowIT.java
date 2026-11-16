@@ -241,7 +241,8 @@ class ApplicationFlowIT extends ApiITBase {
 
     JsonNode listed =
         json(call(HttpMethod.GET, "/applications?status=saved", null, session.accessToken()))
-            .path("data");
+            .path("data")
+            .path("applications");
     assertThat(listed).hasSize(1);
     assertThat(listed.get(0).path("postingTitle").asText()).contains("백엔드");
     assertThat(listed.get(0).path("result").asText()).isEqualTo("none");
@@ -257,7 +258,9 @@ class ApplicationFlowIT extends ApiITBase {
 
     call(HttpMethod.DELETE, "/applications/" + applicationId, null, session.accessToken());
     assertThat(
-            json(call(HttpMethod.GET, "/applications", null, session.accessToken())).path("data"))
+            json(call(HttpMethod.GET, "/applications", null, session.accessToken()))
+                .path("data")
+                .path("applications"))
         .isEmpty();
     Integer itemRows =
         jdbc.queryForObject(
@@ -288,7 +291,11 @@ class ApplicationFlowIT extends ApiITBase {
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create(
-                    "http://127.0.0.1:" + port + "/applications/" + applicationId + "/stream"))
+                    "http://127.0.0.1:"
+                        + port
+                        + "/api/v1/applications/"
+                        + applicationId
+                        + "/stream"))
             .header("Authorization", "Bearer " + session.accessToken())
             .header("Accept", "text/event-stream")
             .timeout(Duration.ofSeconds(5))
@@ -389,6 +396,52 @@ class ApplicationFlowIT extends ApiITBase {
   }
 
   @Test
+  @DisplayName("저장본을 다시 고치면 ready 로 돌아간다 — /restore 별칭도 같은 동작 (FE canon)")
+  void editingSavedReopens() throws Exception {
+    Session session = login();
+    seedCard(session);
+    long postingId = seedParsedPosting(session.userId(), "recruit", TWO_QUESTIONS);
+    long id =
+        json(createApplication(session, Map.of("postingId", postingId)))
+            .path("data")
+            .path("id")
+            .asLong();
+    JsonNode data = awaitFinished(session, id);
+    long itemId = data.path("items").get(0).path("id").asLong();
+    String base = "/applications/" + id;
+    // 재생성 한 번 — 이전 답이 버전으로 남는다(되돌리기 대상)
+    call(HttpMethod.POST, base + "/items/" + itemId + "/regenerate", null, session.accessToken());
+    call(HttpMethod.POST, base + "/save", null, session.accessToken());
+
+    call(
+        HttpMethod.PATCH,
+        base + "/items/" + itemId,
+        Map.of("answer", "저장 뒤 고친 답"),
+        session.accessToken());
+    JsonNode reopened = json(call(HttpMethod.GET, base, null, session.accessToken())).path("data");
+    assertThat(reopened.path("status").asText()).isEqualTo("ready");
+
+    long versionId =
+        json(call(
+                HttpMethod.GET,
+                base + "/items/" + itemId + "/versions",
+                null,
+                session.accessToken()))
+            .path("data")
+            .get(0)
+            .path("id")
+            .asLong();
+    assertThat(versionId).isPositive();
+    ResponseEntity<String> restored =
+        call(
+            HttpMethod.POST,
+            base + "/items/" + itemId + "/versions/" + versionId + "/restore",
+            null,
+            session.accessToken());
+    assertThat(restored.getStatusCode().value()).isEqualTo(200);
+  }
+
+  @Test
   @DisplayName("saved 만 있으면 같은 공고에 새 지원서를 만든다 — 201·새 id (#57)")
   void createAfterSaveMakesNew() throws Exception {
     Session session = login();
@@ -428,7 +481,14 @@ class ApplicationFlowIT extends ApiITBase {
     JsonNode data = awaitFinished(session, json(res).path("data").path("id").asLong());
     assertThat(data.path("items")).hasSize(2);
     assertThat(data.path("items").get(0).path("question").asText()).isEqualTo("직접 쓴 문항 — 협업 경험");
-    assertThat(data.path("items").get(0).path("maxChars").isNull()).isTrue();
+    // 제한 없는 문항은 응답에서 서버 기본 상한(600)으로 — FE 는 양수만 받는다. 저장값은 null 로 남는다.
+    assertThat(data.path("items").get(0).path("maxChars").asInt()).isEqualTo(600);
+    assertThat(
+            jdbc.queryForObject(
+                "select max_chars from application_item where id = ?",
+                Integer.class,
+                data.path("items").get(0).path("id").asLong()))
+        .isNull();
     assertThat(data.path("items").get(1).path("question").asText()).isEqualTo("입사 후 포부");
     assertThat(data.path("items").get(1).path("maxChars").asInt()).isEqualTo(300);
     assertThat(data.path("items").get(1).path("answer").asText().length()).isLessThanOrEqualTo(300);

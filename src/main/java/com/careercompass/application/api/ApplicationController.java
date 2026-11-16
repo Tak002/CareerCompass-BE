@@ -51,15 +51,21 @@ public class ApplicationController {
     this.sseHub = sseHub;
   }
 
+  /**
+   * 공고가 글자 수 제한을 밝히지 않은 문항(저장값 null)의 응답 값 — 서버 기본 생성 길이 400~600자의 상한. FE 는 maxChars 를 양수로만
+   * 받는다(null 이면 지원서 전체 파싱 실패). 저장값은 null 로 남겨 「제한 없음」을 기억한다.
+   */
+  static final int DEFAULT_MAX_CHARS = 600;
+
   public record ItemResponse(
-      Long id, int order, String question, Integer maxChars, String status, String answer) {
+      Long id, int order, String question, int maxChars, String status, String answer) {
 
     static ItemResponse from(ApplicationItem item) {
       return new ItemResponse(
           item.id(),
           item.itemOrder(),
           item.question(),
-          item.maxChars(),
+          item.maxChars() == null || item.maxChars() < 1 ? DEFAULT_MAX_CHARS : item.maxChars(),
           item.status(),
           item.answer());
     }
@@ -127,12 +133,24 @@ public class ApplicationController {
         .body(ApiResponse.success(toResponse(pair)));
   }
 
-  @Operation(summary = "지원 이력 목록", description = "status 필터 지원. 공고 제목·유형·적합도 스냅샷·결과 포함.")
+  /** FE 는 이력을 {applications: [...], nextCursor} 로 읽는다. */
+  public record HistoryResponse(List<ApplicationResponse> applications, String nextCursor) {}
+
+  @Operation(
+      summary = "지원 이력 목록",
+      description = "status 필터·커서 페이징(cursor·limit, 최신순). 공고 제목·유형·적합도 스냅샷·결과 포함.")
   @GetMapping
-  public ApiResponse<List<ApplicationResponse>> list(
-      @CurrentUserId Long userId, @RequestParam(required = false) String status) {
+  public ApiResponse<HistoryResponse> list(
+      @CurrentUserId Long userId,
+      @RequestParam(required = false) String status,
+      @RequestParam(required = false) String cursor,
+      @RequestParam(required = false) Integer limit) {
+    ApplicationService.HistoryPage page =
+        service.list(
+            userId, status, cursor, com.careercompass.common.paging.PageLimit.resolve(limit));
     return ApiResponse.success(
-        service.list(userId, status).stream().map(this::toResponse).toList());
+        new HistoryResponse(
+            page.applications().stream().map(this::toResponse).toList(), page.nextCursor()));
   }
 
   @Operation(summary = "지원서 단건 조회", description = "SSE 가 끊겼을 때의 상태 복원 경로 (v0.2 신설, #37).")
@@ -229,7 +247,10 @@ public class ApplicationController {
   }
 
   @Operation(summary = "버전 되돌리기", description = "현재 본문도 버전으로 보관한 뒤 선택한 버전으로 되돌린다 (v0.2 신설, #38).")
-  @PostMapping("/{id}/items/{itemId}/versions/{versionId}/revert")
+  @PostMapping({
+    "/{id}/items/{itemId}/versions/{versionId}/revert",
+    "/{id}/items/{itemId}/versions/{versionId}/restore" // FE canon 이름 (v0.3 별칭)
+  })
   public ApiResponse<ItemResponse> revert(
       @CurrentUserId Long userId,
       @PathVariable Long id,

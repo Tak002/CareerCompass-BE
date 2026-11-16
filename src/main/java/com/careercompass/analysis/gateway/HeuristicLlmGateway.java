@@ -9,15 +9,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 /**
  * 결정적 온프레미스 구현 — AI 서버 없이 전체 파이프라인이 돈다. PII·공고 본문을 외부로 보내지 않는다. 품질은 LLM 구현(CareerCompass-AI)이 대체하는
- * 것을 전제로 한 기준선이다.
+ * 것을 전제로 한 기준선이다. 빈 등록은 {@link LlmGatewayConfig} 가 한다.
  */
-@Component
-@ConditionalOnProperty(name = "app.ai.base-url", havingValue = "", matchIfMissing = true)
 public class HeuristicLlmGateway implements LlmGateway {
 
   private static final Pattern WORD = Pattern.compile("[A-Za-z가-힣][A-Za-z0-9가-힣+#.]{1,19}");

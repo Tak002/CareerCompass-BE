@@ -218,7 +218,25 @@ public class ApplicationService {
     // 글자 수 초과 저장을 서버가 막지 않는다 — 경고는 클라이언트 몫 (F4-3)
     ApplicationItem item = ownedItem(userId, applicationId, itemId);
     item.edit(answer);
+    reopenIfSaved(owned(userId, applicationId));
     return item;
+  }
+
+  /**
+   * 저장본을 다시 고치면 ready 로 돌아간다 (FE canon 「지원서 규칙」). 같은 공고에 이미 다른 진행 중 지원서가 있으면 공고당 하나 규칙(#57)을 지키려
+   * saved 로 둔다.
+   */
+  private void reopenIfSaved(Application application) {
+    if (!"saved".equals(application.status())) {
+      return;
+    }
+    boolean otherInProgress =
+        findInProgress(application.userId(), application.postingId())
+            .filter(other -> !other.id().equals(application.id()))
+            .isPresent();
+    if (!otherInProgress) {
+      application.reopen();
+    }
   }
 
   /** 재생성 직전 현재 답변 보관 — 최대 3버전, 초과분은 오래된 것부터 삭제 (#38). */
@@ -256,6 +274,7 @@ public class ApplicationService {
                 () -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "버전을 찾을 수 없습니다"));
     archiveVersion(itemId, item.answer(), null); // 현재 본문도 보관해 왕복 가능하게
     item.edit(version.answer());
+    reopenIfSaved(owned(userId, applicationId));
     return item;
   }
 
@@ -283,19 +302,37 @@ public class ApplicationService {
     return application;
   }
 
+  public record HistoryPage(List<ApplicationWithItems> applications, String nextCursor) {}
+
+  /** 지원 이력 (#40) — id 내림차순 커서 페이징. cursor 는 불투명 문자열(마지막 id). */
   @Transactional(readOnly = true)
-  public List<ApplicationWithItems> list(Long userId, String status) {
-    List<Application> applications =
+  public HistoryPage list(Long userId, String status, String cursor, int limit) {
+    long before;
+    try {
+      before = cursor == null || cursor.isBlank() ? Long.MAX_VALUE : Long.parseLong(cursor);
+    } catch (NumberFormatException e) {
+      throw new BusinessException(ErrorCode.INVALID_INPUT, "cursor 가 올바르지 않습니다", "cursor");
+    }
+    org.springframework.data.domain.Pageable page =
+        org.springframework.data.domain.PageRequest.of(0, limit + 1);
+    List<Application> fetched =
         status == null
-            ? applicationRepository.findAllByUserIdAndDeletedAtIsNullOrderByIdDesc(userId)
-            : applicationRepository.findAllByUserIdAndStatusAndDeletedAtIsNullOrderByIdDesc(
-                userId, status);
-    return applications.stream()
-        .map(
-            app ->
-                new ApplicationWithItems(
-                    app, itemRepository.findAllByApplicationIdOrderByItemOrder(app.id())))
-        .toList();
+            ? applicationRepository.findByUserIdAndDeletedAtIsNullAndIdLessThanOrderByIdDesc(
+                userId, before, page)
+            : applicationRepository
+                .findByUserIdAndStatusAndDeletedAtIsNullAndIdLessThanOrderByIdDesc(
+                    userId, status, before, page);
+    boolean hasMore = fetched.size() > limit;
+    List<Application> pageItems = hasMore ? fetched.subList(0, limit) : fetched;
+    String next = hasMore ? String.valueOf(pageItems.get(pageItems.size() - 1).id()) : null;
+    return new HistoryPage(
+        pageItems.stream()
+            .map(
+                app ->
+                    new ApplicationWithItems(
+                        app, itemRepository.findAllByApplicationIdOrderByItemOrder(app.id())))
+            .toList(),
+        next);
   }
 
   @Transactional

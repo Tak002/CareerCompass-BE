@@ -109,4 +109,171 @@ class HttpLlmGatewayTest {
     assertThatThrownBy(() -> gateway.parsePosting("채용", "본문"))
         .isInstanceOf(LlmGateway.ParsingFailedException.class);
   }
+
+  private void serveJson(String path, int status, String json, AtomicInteger calls) {
+    server.createContext(
+        path,
+        exchange -> {
+          calls.incrementAndGet();
+          exchange.getRequestBody().readAllBytes();
+          byte[] body = json.getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(status, body.length);
+          try (OutputStream os = exchange.getResponseBody()) {
+            os.write(body);
+          }
+        });
+  }
+
+  @Test
+  @DisplayName("AI 호출은 HTTP/1.1 — h2c 업그레이드 헤더를 붙이지 않고 본문을 그대로 보낸다 (uvicorn 은 업그레이드 시 본문을 잃는다)")
+  void noH2cUpgrade() throws Exception {
+    java.util.concurrent.atomic.AtomicReference<String> upgrade =
+        new java.util.concurrent.atomic.AtomicReference<>("unset");
+    java.util.concurrent.atomic.AtomicReference<String> body =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/v1/comments",
+        exchange -> {
+          upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+          body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          byte[] out = "{\"strength\":\"s\",\"weakness\":\"w\"}".getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, out.length);
+          try (OutputStream os = exchange.getResponseBody()) {
+            os.write(out);
+          }
+        });
+    server.start();
+    HttpLlmGateway gateway = gateway(server.getAddress().getPort());
+
+    gateway.comments(
+        new LlmGateway.CommentContext(
+            java.util.List.of("Spring"), java.util.List.of(), java.util.List.of(), null));
+
+    assertThat(upgrade.get()).isNull();
+    assertThat(body.get()).contains("\"matchedKeywords\":[\"Spring\"]");
+  }
+
+  @Test
+  @DisplayName("parsingFailed 의 reasonCode 를 싣는다 — NOT_A_POSTING 은 목록 제외 대상 (#65)")
+  void reasonCodeCarried() throws Exception {
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    serveJson(
+        "/v1/parse-posting",
+        200,
+        "{\"parsingFailed\":true,\"reason\":\"학사 공지\",\"reasonCode\":\"NOT_A_POSTING\"}",
+        new AtomicInteger());
+    server.start();
+    HttpLlmGateway gateway = gateway(server.getAddress().getPort());
+
+    assertThatThrownBy(() -> gateway.parsePosting("2026-2 수강신청 안내", "본문"))
+        .isInstanceOfSatisfying(
+            LlmGateway.ParsingFailedException.class,
+            e -> {
+              assertThat(e.reasonCode()).isEqualTo("NOT_A_POSTING");
+              assertThat(e.notAPosting()).isTrue();
+            });
+  }
+
+  @Test
+  @DisplayName("분야 유사도 — 20건씩 나눠 부르고 id 별 점수를 모은다 (AI 계약 §5)")
+  void fieldScoresBatched() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    java.util.List<String> bodies = new java.util.concurrent.CopyOnWriteArrayList<>();
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/v1/field-similarity",
+        exchange -> {
+          calls.incrementAndGet();
+          String request =
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+          bodies.add(request);
+          // 요청에 실린 id 를 그대로 돌려준다 — 점수는 id 마다 다르게
+          var node = new ObjectMapper().readTree(request);
+          StringBuilder scores = new StringBuilder();
+          node.path("postings")
+              .forEach(
+                  p -> {
+                    if (scores.length() > 0) {
+                      scores.append(',');
+                    }
+                    long id = p.path("id").asLong();
+                    scores
+                        .append("{\"id\":")
+                        .append(id)
+                        .append(",\"score\":")
+                        .append(id % 101)
+                        .append('}');
+                  });
+          byte[] body =
+              ("{\"scores\":["
+                      + scores
+                      + "],\"method\":\"embedding\",\"usage\":{\"totalTokens\":0}}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, body.length);
+          try (OutputStream os = exchange.getResponseBody()) {
+            os.write(body);
+          }
+        });
+    server.start();
+    HttpLlmGateway gateway = gateway(server.getAddress().getPort());
+
+    java.util.List<LlmGateway.FieldPosting> postings =
+        java.util.stream.LongStream.rangeClosed(1, 25)
+            .mapToObj(
+                id -> new LlmGateway.FieldPosting(id, "공고 " + id, java.util.List.of("Spring")))
+            .toList();
+    java.util.Map<Long, Integer> scores =
+        gateway.fieldScores(java.util.List.of("백엔드", " ", "Spring"), postings);
+
+    assertThat(calls.get()).isEqualTo(2);
+    assertThat(scores).hasSize(25).containsEntry(7L, 7).containsEntry(25L, 25);
+    assertThat(bodies.get(0)).contains("\"interestTexts\":[\"백엔드\",\"Spring\"]"); // 공백 텍스트는 뺀다
+  }
+
+  @Test
+  @DisplayName("분야 유사도 실패·관심 분야 없음 — 던지지 않고 빈 결과(글자 비교로 대신) (AI 계약 §5)")
+  void fieldScoresFallBack() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    serveJson(
+        "/v1/field-similarity", 503, "{\"error\":\"budget\",\"code\":\"LLM_UNAVAILABLE\"}", calls);
+    server.start();
+    HttpLlmGateway gateway = gateway(server.getAddress().getPort());
+    var postings = java.util.List.of(new LlmGateway.FieldPosting(1L, "공고", java.util.List.of()));
+
+    assertThat(gateway.fieldScores(java.util.List.of("백엔드"), postings)).isEmpty();
+    int afterFailure = calls.get();
+    assertThat(afterFailure).isGreaterThanOrEqualTo(1);
+
+    assertThat(gateway.fieldScores(java.util.List.of(" "), postings)).isEmpty();
+    assertThat(calls.get()).isEqualTo(afterFailure); // 관심 분야가 비면 부르지도 않는다
+  }
+
+  @Test
+  @DisplayName("게이트웨이 선택 — 주소가 비면 휴리스틱, 있으면 HTTP 하나만 (#64)")
+  void gatewaySelection() {
+    LlmGatewayConfig config = new LlmGatewayConfig();
+    var masker = new com.careercompass.common.privacy.PrivacyMasker();
+    var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+
+    assertThat(
+            config.llmGateway(
+                new AiProperties("", null, 0, null, 0), new ObjectMapper(), masker, registry))
+        .isInstanceOf(HeuristicLlmGateway.class);
+    assertThat(
+            config.llmGateway(
+                new AiProperties(null, null, 0, null, 0), new ObjectMapper(), masker, registry))
+        .isInstanceOf(HeuristicLlmGateway.class);
+    assertThat(
+            config.llmGateway(
+                new AiProperties("http://ai:8000", null, 0, null, 0),
+                new ObjectMapper(),
+                masker,
+                registry))
+        .isInstanceOf(HttpLlmGateway.class);
+  }
 }

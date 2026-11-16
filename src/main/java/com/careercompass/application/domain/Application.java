@@ -124,6 +124,13 @@ public class Application {
     this.savedAt = at;
   }
 
+  /** 저장본을 다시 편집 — ready 로 되돌린다. savedAt 은 마지막 저장 시각으로 남긴다. */
+  public void reopen() {
+    if ("saved".equals(status)) {
+      this.status = "ready";
+    }
+  }
+
   public void updateResult(String result) {
     this.result = result;
   }

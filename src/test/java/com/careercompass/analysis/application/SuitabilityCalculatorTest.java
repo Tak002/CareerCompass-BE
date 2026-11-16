@@ -27,6 +27,32 @@ class SuitabilityCalculatorTest {
   }
 
   @Test
+  @DisplayName("AI 분야 유사도 점수가 있으면 field_similarity 축만 그 값 — 코멘트 근거는 글자 비교 그대로 (AI 계약 §5)")
+  void aiFieldScoreReplacesOnlyFieldAxis() {
+    SuitabilityCalculator.Input base = baseInput();
+    SuitabilityCalculator.Input withAi =
+        new SuitabilityCalculator.Input(
+            base.keywords(),
+            base.qualificationYear(),
+            base.qualificationGpa(),
+            base.qualificationMajor(),
+            base.preferences(),
+            base.rawContent(),
+            base.interestTexts(),
+            base.department(),
+            base.gpa(),
+            base.experienceTexts(),
+            37);
+
+    SuitabilityCalculator.Result keyword = calculator.calculate(base);
+    SuitabilityCalculator.Result ai = calculator.calculate(withAi);
+
+    assertThat(ai.breakdown().get(0).score()).isEqualTo(37);
+    assertThat(ai.breakdown().subList(1, 4)).isEqualTo(keyword.breakdown().subList(1, 4));
+    assertThat(ai.matchedKeywords()).isEqualTo(keyword.matchedKeywords());
+  }
+
+  @Test
   @DisplayName("결정성 — 같은 입력이면 같은 점수 (#32)")
   void deterministic() {
     SuitabilityCalculator.Result first = calculator.calculate(baseInput());
