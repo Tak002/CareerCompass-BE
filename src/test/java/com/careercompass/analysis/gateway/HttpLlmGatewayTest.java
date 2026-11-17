@@ -157,6 +157,36 @@ class HttpLlmGatewayTest {
   }
 
   @Test
+  @DisplayName(
+      "본문을 못 가져온 공고(rawContent=null)도 빈 문자열로 보내 parsingFailed 로 끝난다 — NPE 로 pending 에 갇히지 않는다")
+  void nullRawContentIsSentAsEmpty() throws Exception {
+    java.util.concurrent.atomic.AtomicReference<String> body =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/v1/parse-posting",
+        exchange -> {
+          body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          byte[] out =
+              "{\"parsingFailed\":true,\"reason\":\"본문이 비어 있습니다\",\"reasonCode\":\"EMPTY\"}"
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, out.length);
+          try (OutputStream os = exchange.getResponseBody()) {
+            os.write(out);
+          }
+        });
+    server.start();
+    HttpLlmGateway gateway = gateway(server.getAddress().getPort());
+
+    assertThatThrownBy(() -> gateway.parsePosting("제목", null))
+        .isInstanceOfSatisfying(
+            LlmGateway.ParsingFailedException.class,
+            e -> assertThat(e.reasonCode()).isEqualTo("EMPTY"));
+    assertThat(body.get()).contains("\"rawContent\":\"\"");
+  }
+
+  @Test
   @DisplayName("parsingFailed 의 reasonCode 를 싣는다 — NOT_A_POSTING 은 목록 제외 대상 (#65)")
   void reasonCodeCarried() throws Exception {
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

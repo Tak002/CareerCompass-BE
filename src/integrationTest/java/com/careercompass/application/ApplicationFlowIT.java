@@ -306,20 +306,16 @@ class ApplicationFlowIT extends ApiITBase {
     assertThat(response.statusCode()).isEqualTo(200);
 
     StringBuilder received = new StringBuilder();
+    // 스트림이 **깨끗하게 끝날 때까지** 읽는다. 앱(FE)은 연결 종료로 스트림 끝을 판단하고 EOF 예외를 「중단」으로
+    // 읽는다 — 예전 이 자리는 그 예외를 잡음으로 무시해, 끝날 때의 ASYNC 디스패치 인가 실패를 놓쳤다.
     try (var reader =
         new java.io.BufferedReader(
             new java.io.InputStreamReader(
                 response.body(), java.nio.charset.StandardCharsets.UTF_8))) {
       String line;
-      long deadline = System.currentTimeMillis() + 5000;
-      while (System.currentTimeMillis() < deadline && (line = reader.readLine()) != null) {
+      while ((line = reader.readLine()) != null) {
         received.append(line).append('\n');
-        if (received.indexOf("event:complete") >= 0 && line.startsWith("data:")) {
-          break; // complete 의 data 줄까지 읽고 끝낸다 (#59 complete{status})
-        }
       }
-    } catch (java.io.IOException ignored) {
-      // complete 수신 후의 전송 계층 종료 잡음은 판정에 영향 없음
     }
     assertThat(received.toString()).contains("event:item_done");
     assertThat(received.toString()).contains("event:complete");

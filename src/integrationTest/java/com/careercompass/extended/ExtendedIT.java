@@ -175,6 +175,11 @@ class ExtendedIT extends ApiITBase {
             .path("data");
     assertThat(data.path("sampleSize").asInt()).isEqualTo(1);
     assertThat(data.path("metrics").toString()).contains("자격증");
+    // FE 는 peerAvg 를 숫자로만 받는다 — me_only 는 비교 대상이 없어 me 와 같은 값
+    for (JsonNode metric : data.path("metrics")) {
+      assertThat(metric.path("peerAvg").isNumber()).isTrue();
+      assertThat(metric.path("peerAvg").asDouble()).isEqualTo(metric.path("me").asDouble());
+    }
 
     ResponseEntity<String> bad =
         call(HttpMethod.GET, "/roadmap/compare?cohort=unknown", null, session.accessToken());

@@ -4,6 +4,7 @@ import com.careercompass.auth.jwt.JwtAuthenticationFilter;
 import com.careercompass.common.api.ApiResponse;
 import com.careercompass.common.api.ErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -41,7 +42,12 @@ public class SecurityConfig {
         .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(
             auth ->
-                auth.requestMatchers("/actuator/health", "/error")
+                // SSE(SseEmitter) 가 끝날 때의 ASYNC 재디스패치와 ERROR 디스패치는 인가를 다시 걸지 않는다. JWT 필터는
+                // 그 디스패치에서 돌지 않아 인증이 비어 Access Denied 가 나고, 이미 커밋된 스트림이 비정상 종료돼
+                // 앱(FE)은 EOF 를 「스트림 중단」으로 읽었다. 원래 요청에서 이미 인가를 마쳤다.
+                auth.dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR)
+                    .permitAll()
+                    .requestMatchers("/actuator/health", "/error")
                     .permitAll()
                     // 로그인·재발급만 공개 — logout·biometric/register 는 인증 필요 (#12, #13)
                     .requestMatchers("/auth/social/*", "/auth/refresh")

@@ -20,7 +20,8 @@ public class RoadmapService {
 
   public static final int MIN_SAMPLE = 5;
 
-  public record Metric(String name, double me, Double peerAvg) {}
+  /** peerAvg 는 늘 숫자다(FE 는 null 을 받지 않는다). me_only 는 비교 대상이 없어 me 와 같은 값을 싣는다. */
+  public record Metric(String name, double me, double peerAvg) {}
 
   public record Suggestion(String semester, String action, int expectedLift) {}
 
@@ -55,7 +56,11 @@ public class RoadmapService {
       case "me_only" -> {
         List<Metric> metrics =
             METRIC_LABELS.entrySet().stream()
-                .map(e -> new Metric(e.getValue(), mine.getOrDefault(e.getKey(), 0d), null))
+                .map(
+                    e -> {
+                      double value = mine.getOrDefault(e.getKey(), 0d);
+                      return new Metric(e.getValue(), value, value); // 비교 대상 없음 — FE 는 me 만 그린다
+                    })
                 .toList();
         return new Compare(cohort, 1, metrics, suggestForMeOnly(mine));
       }

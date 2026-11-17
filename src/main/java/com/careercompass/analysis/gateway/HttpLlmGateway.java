@@ -72,8 +72,16 @@ public class HttpLlmGateway implements LlmGateway {
     if (cached != null) {
       return cached; // 같은 공고를 두 번 파싱하지 않는다
     }
+    // 본문을 못 가져온 공고(rawContent=null)도 보낸다 — Map.of 는 null 을 받지 않아 예전엔 NPE 로 끝나 공고가 pending 에
+    // 영원히 머물렀다. 빈 본문은 AI 가 parsingFailed(EMPTY) 로 답하고 BE 는 failed 로 확정한다.
     JsonNode node =
-        callWithRetry("/v1/parse-posting", Map.of("title", title, "rawContent", rawContent));
+        callWithRetry(
+            "/v1/parse-posting",
+            Map.of(
+                "title",
+                title == null ? "" : title,
+                "rawContent",
+                rawContent == null ? "" : rawContent));
     if (Boolean.TRUE.equals(node.path("parsingFailed").asBoolean(false))) {
       throw new ParsingFailedException(
           node.path("reason").asText("파싱 실패"), textOrNull(node, "reasonCode"));
@@ -145,11 +153,13 @@ public class HttpLlmGateway implements LlmGateway {
                 "tone",
                 tone == null ? "formal" : tone,
                 "postingTitle",
-                postingTitle,
+                postingTitle == null ? "" : postingTitle,
                 "keywords",
-                keywords,
+                keywords == null ? List.of() : keywords,
                 "experienceSummaries",
-                privacyMasker.maskAll(experienceSummaries)));
+                experienceSummaries == null
+                    ? List.of()
+                    : privacyMasker.maskAll(experienceSummaries)));
     String answer = node.path("answer").asText(null);
     if (answer == null || answer.isBlank()) {
       throw new BusinessException(ErrorCode.LLM_UNAVAILABLE, "AI 응답 스키마가 올바르지 않습니다");
